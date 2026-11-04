@@ -31,6 +31,7 @@ testSpan()
     testNewMemoDefaultsToToday()
     testSpanPickerMatchesPriority()
     testPaletteContrast()
+    testCardGrid()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -964,6 +965,59 @@ func testPaletteContrast() {
                      + pow(low.1.2 - light.2, 2), 0.5)
         check(dist > 0.45, "low 与 \(name) 应 >0.45 可区分，实测 \(String(format: "%.2f", dist))")
     }
+}
+
+@MainActor
+
+
+/// 卡片网格的列数与宽度。
+///
+/// 三条约束：
+///   · 卡片不能窄到标题只剩几个字（读起来断句）
+///   · 也不能宽到一屏只放两三张（卡片的意义是"一眼看全"）
+///   · 列宽必须是正数，且总和不能超过可用宽度（否则横向溢出）
+func testCardGrid() {
+    let columns = UILogic.cardColumnCount()
+    check(columns >= 2, "至少两列，否则卡片太宽")
+    check(columns <= 4, "最多四列，否则标题读不下")
+
+    // 面板内容宽约 584pt
+    let available = 568.0
+    let spacing = 8.0
+    let w = UILogic.cardWidth(available: available, columns: columns, spacing: spacing)
+
+    check(w > 0, "卡片宽度应为正")
+    // 一行至少能放 10 个汉字（13.5pt 字号约 13.5pt/字）
+    check(w / 13.5 >= 10, "卡片一行应能放下至少 10 个汉字，实测 \(String(format: "%.0f", w/13.5))")
+    // 也不能宽到一屏只放一张半
+    check(w <= available / 2, "卡片不应超过可用宽度的一半")
+
+    // 总宽不溢出
+    let total = w * Double(columns) + spacing * Double(columns - 1)
+    check(abs(total - available) < 0.01, "列宽总和应正好铺满可用宽度")
+
+    // 边界：列数为 0 不能除零
+    check(UILogic.cardWidth(available: 500, columns: 0, spacing: 8) == 0,
+          "列数为 0 时应返回 0")
+    // 可用宽度极小（首帧布局）时不能返回负数
+    check(UILogic.cardWidth(available: 5, columns: 3, spacing: 8) == 0,
+          "可用宽度不够时应钳到 0，不能出负数")
+
+    // 卡片高度必须能容下三行标题。
+    //
+    // 曾经写死 84pt——一行标题只要 54pt 看着刚好，
+    // 但三行需要 88pt，第三行会被直接截掉。
+    // 现在用 minHeight，单张能自己撑开。
+    let lineHeight = 12.5 * 1.35   // 12.5pt 字号的行高
+    let threeLines = 3 + 16 + lineHeight * 3 + 6 + 12
+    check(UILogic.cardMinHeight > 0, "卡片最小高应为正")
+    check(threeLines > UILogic.cardMinHeight,
+          "三行标题应高于最小高，从而触发自适应撑开（验证 minHeight 而非固定高）")
+
+    // 列数越多，单张越窄（单调性）
+    let w2 = UILogic.cardWidth(available: available, columns: 2, spacing: spacing)
+    let w4 = UILogic.cardWidth(available: available, columns: 4, spacing: spacing)
+    check(w2 > w && w > w4, "列数增加时单张应更窄")
 }
 
 @MainActor

@@ -411,3 +411,28 @@ extension UILogic {
          fg.2 * alpha + bg.2 * (1 - alpha))
     }
 }
+
+// MARK: - 卡片网格
+
+extension UILogic {
+    /// 卡片列数。
+    ///
+    /// 面板内容宽固定约 584pt，三列时每张约 180pt——
+    /// 这个宽度能放下 12~14 个汉字，标题两行内可读完。
+    /// 两列会显得卡片太空，四列则标题只剩 8 个字，读起来断句。
+    static func cardColumnCount() -> Int { 3 }
+
+    /// 卡片最小高度。
+    ///
+    /// 一行标题只需 54pt，三行需要 88pt。用 minHeight 而不是固定高度：
+    /// 固定 84pt 会把第三行截掉。网格里同一排由 LazyVGrid 拉齐，
+    /// 所以单张撑高不会造成参差。
+    static let cardMinHeight: Double = 84
+
+    /// 单张卡片宽度。
+    static func cardWidth(available: Double, columns: Int, spacing: Double) -> Double {
+        guard columns > 0 else { return 0 }
+        let w = (available - spacing * Double(columns - 1)) / Double(columns)
+        return max(0, w)
+    }
+}

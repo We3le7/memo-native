@@ -25,6 +25,30 @@ final class ComposerState: ObservableObject {
         var id: String { rawValue }
     }
 
+    /// 列表 / 卡片两种排布。
+    ///
+    /// 卡片不是"列表换个样子"——它服务于另一种扫视方式：
+    /// 列表适合逐条读文字，卡片适合一眼看清有多少件事、
+    /// 各自多急。条数少时卡片更舒服，条数多时列表更高效。
+    /// 所以这个开关交给用户，不替他决定。
+    @Published var layout: Layout = .list {
+        didSet { UserDefaults.standard.set(layout.rawValue, forKey: "memoLayout") }
+    }
+
+    enum Layout: String, CaseIterable, Identifiable {
+        case list = "列表"
+        case card = "卡片"
+        var id: String { rawValue }
+        var icon: String { self == .list ? "list.bullet" : "square.grid.2x2" }
+    }
+
+    init() {
+        if let raw = UserDefaults.standard.string(forKey: "memoLayout"),
+           let saved = Layout(rawValue: raw) {
+            layout = saved
+        }
+    }
+
     private var toastToken = 0
     private var clockTask: Task<Void, Never>?
 
@@ -447,6 +471,11 @@ struct ContentView: View {
                 .foregroundStyle(Theme.inkTertiary)
                 .lineLimit(1)
                 .contentTransition(.opacity)
+
+            // 排布切换。放在读数右边、紧挨内容区，
+            // 因为它影响的是"下面怎么排"，不是筛什么。
+            LayoutToggle(selected: $ui.layout, reduceMotion: reduceMotion)
+                .padding(.leading, 10)
         }
         .padding(.horizontal, Theme.gutter)
         .padding(.top, 2)
@@ -466,6 +495,8 @@ struct ContentView: View {
         Group {
             if visibleItems.isEmpty {
                 emptyState
+            } else if ui.layout == .card {
+                cardArea
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 1, pinnedViews: [.sectionHeaders]) {
@@ -536,6 +567,80 @@ struct ContentView: View {
             }
         }
         .animation(Theme.easeMedium, value: visibleItems.isEmpty)
+    }
+
+    /// 卡片网格。
+    ///
+    /// 用 LazyVGrid 而不是自己算列：列宽由 GeometryReader 给死，
+    /// 保证三列且每列等宽；minWidth 只是兜底，实际不会被撑破。
+    ///
+    /// 卡片视图不做日期分组——分组标题在网格里会把连续感切断，
+    /// 而卡片的意义正是"一眼看全"。日期信息降级到卡片底部的小字。
+    private var cardArea: some View {
+        GeometryReader { geo in
+            let spacing: CGFloat = 8
+            let horizontalPadding: CGFloat = 8
+            let usable = geo.size.width - horizontalPadding * 2
+            // 三列：面板内容宽约 584，减去边距后每张约 180pt。
+            // 这个宽度能放下 12~14 个汉字，标题两行内可读完。
+            let columns = UILogic.cardColumnCount()
+            let cardWidth = UILogic.cardWidth(
+                available: Double(usable),
+                columns: columns,
+                spacing: Double(spacing)
+            )
+
+            ScrollView {
+                LazyVGrid(
+                    columns: Array(
+                        repeating: GridItem(.fixed(cardWidth), spacing: spacing, alignment: .top),
+                        count: columns
+                    ),
+                    spacing: spacing
+                ) {
+                    ForEach(visibleItems) { item in
+                        MemoCard(
+                            item: item,
+                            onToggle: {
+                                withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
+                                    store.toggleDone(item.id)
+                                }
+                            },
+                            onDelete: {
+                                withAnimation(.easeInOut(duration: 0.22)) {
+                                    if let removed = store.delete(item.id) {
+                                        ui.rememberForUndo([removed])
+                                        ui.flash("已删除")
+                                    }
+                                }
+                            },
+                            onBeginEdit: {
+                                // 卡片不内联编辑：卡片里塞输入框会撑破布局。
+                                // 切回列表编辑，比在卡片上硬塞一个窄输入框合理。
+                                withAnimation(Theme.springSnappy) { ui.layout = .list }
+                                ui.editingID = item.id
+                                ui.editingText = item.title
+                            },
+                            onSetPriority: { level in
+                                withAnimation(.easeOut(duration: 0.16)) {
+                                    store.setPriority(item.id, to: level)
+                                }
+                            }
+                        )
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity.combined(with: .scale(scale: 0.94)),
+                                removal: .opacity.combined(with: .scale(scale: 0.94))
+                            )
+                        )
+                    }
+                }
+                .padding(.horizontal, horizontalPadding)
+                .padding(.bottom, 8)
+                .animation(Theme.rowInsert, value: visibleItems.map(\.id))
+            }
+            .scrollIndicators(.never)
+        }
     }
 
     private var emptyState: some View {
@@ -896,6 +1001,206 @@ struct GroupHeader: View {
 }
 
 // MARK: - 单行
+
+// MARK: - 排布切换
+
+/// 列表 / 卡片切换。
+///
+/// 用图标而不是文字：两个图标是通用隐喻，不占宽度，
+/// 也让筛选栏的右侧不至于又多一排文字。
+/// 选中态沿用 FilterSegment 的滑动底块，保证同一界面里
+/// 所有"几选一"控件的手感一致。
+struct LayoutToggle: View {
+    @Binding var selected: ComposerState.Layout
+    let reduceMotion: Bool
+
+    @Namespace private var indicator
+    @StateObject private var hover = HoverFlag()
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(ComposerState.Layout.allCases) { option in
+                Button {
+                    guard selected != option else { return }
+                    if reduceMotion {
+                        selected = option
+                    } else {
+                        withAnimation(Theme.springSnappy) { selected = option }
+                    }
+                } label: {
+                    Image(systemName: option.icon)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(selected == option ? Theme.inkSecondary : Theme.inkQuaternary)
+                        .frame(width: 20, height: 18)
+                        .contentShape(Rectangle().inset(by: -2))
+                        .background {
+                            if selected == option {
+                                Capsule()
+                                    .fill(Theme.surfaceRaised)
+                                    .overlay(
+                                        Capsule().strokeBorder(Theme.stroke, lineWidth: Theme.hairline)
+                                    )
+                                    .matchedGeometryEffect(id: "layoutIndicator", in: indicator)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .help(option == .list ? "列表视图" : "卡片视图")
+            }
+        }
+        .padding(2)
+        .background(Capsule().fill(Theme.surface))
+        .overlay(Capsule().strokeBorder(Theme.stroke, lineWidth: Theme.hairline))
+        .animation(reduceMotion ? nil : Theme.springSnappy, value: selected)
+    }
+}
+
+// MARK: - 卡片视图
+
+/// 卡片：四列网格，一屏能看到更多件事。
+///
+/// 和 MemoRow 的分工：
+///   · 行 —— 逐条读文字，适合处理
+///   · 卡片 —— 一眼扫全局，适合浏览
+/// 所以卡片弱化日期/工期文字，强化**优先级色块**和**标题**，
+/// 让"哪几件最急"成为第一眼信息。
+struct MemoCard: View {
+    let item: Memo
+    let onToggle: () -> Void
+    let onDelete: () -> Void
+    let onBeginEdit: () -> Void
+    let onSetPriority: (Priority) -> Void
+
+    @StateObject private var hover = Hover()
+
+    @MainActor
+    final class Hover: ObservableObject {
+        @Published var hovering = false
+        @Published var pressed = false
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // 顶部色带：卡片的"情绪值"。
+            // 不用整张卡着色——那会让四张卡糊成一片；
+            // 一条 3pt 的顶边足够区分，又不干扰读标题。
+            Rectangle()
+                .fill(item.done ? Theme.inkQuaternary.opacity(0.5) : item.priority.tint)
+                .frame(height: 3)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top, spacing: 6) {
+                    Text(item.title)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .strikethrough(item.done, color: Color.secondary.opacity(0.55))
+                        .foregroundStyle(item.done ? Theme.inkTertiary : Theme.ink)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2, perform: onBeginEdit)
+
+                    // 勾选：小圆点，和列表里的勾选圈同一套语言
+                    Button(action: onToggle) {
+                        ZStack {
+                            Circle()
+                                .strokeBorder(
+                                    hover.hovering && !item.done
+                                        ? Theme.accent.opacity(0.7)
+                                        : Theme.inkQuaternary,
+                                    lineWidth: 1.2
+                                )
+                                .frame(width: 13, height: 13)
+                            if item.done {
+                                Circle()
+                                    .fill(Theme.accent)
+                                    .frame(width: 13, height: 13)
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 7, weight: .bold))
+                                    .foregroundStyle(.white)
+                            }
+                        }
+                        .frame(width: 15, height: 15)
+                        .contentShape(Circle().inset(by: -3))
+                        .scaleEffect(hover.pressed ? 0.88 : 1)
+                    }
+                    .buttonStyle(.plain)
+                    .help(item.done ? "标记为未完成" : "标记为已完成")
+                }
+
+                Spacer(minLength: 0)
+
+                // 底部元信息：优先级 + 工期。只留最关键的两个。
+                HStack(spacing: 5) {
+                    Text(item.priority.label)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(item.done ? Theme.inkTertiary : item.priority.tint)
+
+                    if item.isMultiDay {
+                        Text("·")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Theme.inkQuaternary)
+                        Text("\(item.spanDays) 天")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(Theme.inkTertiary)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if hover.hovering {
+                        Button(action: onDelete) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(Theme.inkTertiary)
+                                .frame(width: 14, height: 14)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("删除")
+                        .transition(.opacity)
+                    }
+                }
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 8)
+        }
+        // 不写死高度：标题最多三行，1 行与 3 行相差 34pt。
+        // 固定 84pt 会把第三行截掉（实测 3 行需要 87.6pt）。
+        // 网格里同一行的卡片会被 LazyVGrid 拉齐到最高者，
+        // 所以视觉上仍然是整齐的一排，不会参差。
+        .frame(minHeight: UILogic.cardMinHeight, alignment: .top)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(hover.hovering ? Theme.surfaceRaised : Theme.surface)
+                .animation(Theme.easeFast, value: hover.hovering)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(
+                    hover.hovering ? Theme.strokeStrong : Theme.stroke,
+                    lineWidth: Theme.hairline
+                )
+        )
+        .opacity(item.done ? 0.62 : 1)
+        .scaleEffect(hover.pressed ? 0.975 : 1)
+        .animation(Theme.springBouncy, value: hover.pressed)
+        .onHover { inside in
+            withAnimation(Theme.easeFast) { hover.hovering = inside }
+        }
+        .contextMenu {
+            Button(item.done ? "标记为未完成" : "标记为已完成", action: onToggle)
+            Button("修改", action: onBeginEdit)
+            Divider()
+            ForEach(Priority.allCases) { level in
+                Button("\(level.icon) \(level.label)") { onSetPriority(level) }
+            }
+            Divider()
+            Button("删除", role: .destructive, action: onDelete)
+        }
+    }
+}
 
 struct MemoRow: View {
     let item: Memo
