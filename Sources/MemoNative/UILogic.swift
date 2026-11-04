@@ -241,3 +241,21 @@ extension UILogic {
         return !isRevealing
     }
 }
+
+// MARK: - 动效时长
+
+extension UILogic {
+    /// 展开与折叠的时长，单位秒。
+    ///
+    /// 两者必须相等。曾经为了"收回去慢一点"把折叠单独调慢，
+    /// 结果同一个动作一快一慢，看着不像同一件事的正反面。
+    ///
+    /// 这里把数值集中一份，测试直接比对，源码里也只剩这两个常量。
+    static let unfoldSeconds: Double = 0.34
+    static let foldSeconds: Double = 0.34
+
+    /// 展开与折叠是否同速。
+    static var isSymmetricDuration: Bool {
+        abs(unfoldSeconds - foldSeconds) < 0.0001
+    }
+}

@@ -197,7 +197,11 @@ final class PanelController {
         DispatchQueue.main.async {
             FrameProbe.shared.start("展开")
             self.playUnfold()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            // 探针窗口与折叠对齐（都是动画时长 + 0.06），
+            // 否则两边采样窗口不同，帧数没法横向比较。
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + Self.slowFactor * PanelController.unfoldDuration + 0.06
+            ) {
                 FrameProbe.shared.stop()
                 self.isRevealing = false
             }
@@ -440,7 +444,17 @@ final class PanelController {
                 // 只认“此刻确实不是 key”这一事实
                 guard !panel.isKeyWindow else { return }
                 if panel.attachedSheet != nil { return }
-                if self.behavior == .demote || self.behavior == .hide {
+                // .hide 行为下不在这里降级。
+                //
+                // 失焦会先来 didResignKey、再来 didResignActive。
+                // 如果在 didResignKey 就降到 .normal，面板立刻被前台 App
+                // 的窗口盖住；随后 didResignActive 触发 hide() 播折叠动画，
+                // 但那 0.34 秒全被遮在下面——失焦时就看不到任何动画，
+                // 观感是"点别处，页面啪地没了"。
+                //
+                // .demote 只需要降级，交给它；.hide 的降级由 hide() 在
+                // 动画播完后自己做。
+                if self.behavior == .demote {
                     self.applyLevel(active: false)
                 }
             }
@@ -569,18 +583,13 @@ final class PanelController {
         )
     }
 
-    /// 展开/折叠共用的形变参数。
+    /// 展开与折叠**同速**，曲线也是同一条。
     ///
-    /// 折叠是展开的逆过程，两边必须用同一份常量——
-    /// 之前各写一套，改了一边忘了另一边，正反播出来手感对不上。
+    /// 曾经为了"收回去慢一点"把折叠单独调慢（0.52 → 0.45），
+    /// 但那破坏逆过程的手感：同一个动作一快一慢，
+    /// 看着不像同一件事的正反面。
     private static let unfoldDuration: CFTimeInterval = 0.34
-    /// 折叠比展开略慢。
-    ///
-    /// 展开是"叫出来"，快一点显得利落；收起是"收回去"，
-    /// 慢一点让眼睛跟得上面板往球那边缩的过程。
-    /// 两者的**曲线形状**仍然完全一致（同一组阻尼/帧数/关键帧），
-    /// 只是时间轴拉长——逆过程的观感不变，只是放慢。
-    private static let foldDuration: CFTimeInterval = 0.45
+    private static let foldDuration: CFTimeInterval = 0.34
     private static let unfoldStartScale: CGFloat = 0.06
     private static let unfoldFrames = 34
     private static let unfoldDamping: CGFloat = 0.74

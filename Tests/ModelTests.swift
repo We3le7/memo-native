@@ -23,6 +23,7 @@ testSpan()
     testFoldSlowerButSameShape()
     testFoldFadeNotTooFast()
     testWindowLevelDuringFold()
+    testFoldSameSpeedAsUnfold()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -627,6 +628,36 @@ func testWindowLevelDuringFold() {
         }
     }
     check(blocked == 1, "4 种组合里只有 1 种该被拒绝")
+}
+
+@MainActor
+
+
+/// 折叠必须与展开**同速**。
+///
+/// 曾经为了"收回去慢一点"把折叠单独调到 0.52、0.45。
+/// 结果同一个动作一快一慢，看着不像同一件事的正反面——
+/// 展开是"唰"地出来、收起是"缓缓"缩回去，观感割裂。
+///
+/// 现在两者都是 0.34s，曲线也是同一条（只是采样值倒序）。
+func testFoldSameSpeedAsUnfold() {
+    check(UILogic.isSymmetricDuration,
+          "展开与折叠时长必须相等（当前 \(UILogic.unfoldSeconds)s vs \(UILogic.foldSeconds)s）")
+    check(abs(UILogic.unfoldSeconds - 0.34) < 0.0001, "展开应为 0.34s")
+    check(abs(UILogic.foldSeconds - 0.34) < 0.0001, "折叠应为 0.34s")
+
+    // 同速 + 同曲线形状 = 严格逆过程
+    let count = 34
+    let forward = MotionCurve.springValues(from: 0.06, to: 1.0, damping: 0.74, count: count)
+    let backward = Array(forward.reversed())
+    check(abs(backward.first! - forward.last!) < 0.0001, "逆序首项应对应正序末项")
+    check(abs(backward.last! - forward.first!) < 0.0001, "逆序末项应对应正序首项")
+
+    // 时长必须在合理区间：太快看不清形变，太慢拖沓
+    for d in [UILogic.unfoldSeconds, UILogic.foldSeconds] {
+        check(d >= 0.25, "时长不应短于 0.25s（看不清形变）")
+        check(d <= 0.60, "时长不应长于 0.60s（显得拖沓）")
+    }
 }
 
 @MainActor
