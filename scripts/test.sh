@@ -21,6 +21,7 @@ xcrun swiftc \
   "${ROOT}/Sources/MemoNative/UILogic.swift" \
   "${ROOT}/Sources/MemoNative/OrbMetrics.swift" \
   "${ROOT}/Sources/MemoNative/GlassAppearance.swift" \
+  "${ROOT}/Sources/MemoNative/OrbMotion.swift" \
   -o "${BUILD}/modeltests"
 
 echo "==> 运行"

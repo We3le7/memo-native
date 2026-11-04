@@ -24,6 +24,8 @@ struct OrbView: View {
     let hovering: Bool
     /// 玻璃强度 0…1，来自设置，影响球体的通透度与轮廓强度
     var strength: Double = GlassAppearance.defaultStrength
+    /// 吸入进度 0…1，展开/收起时由外部驱动
+    var collapse: CGFloat = 0
 
     /// 逾期优先展示：逾期是唯一需要立刻处理的状态
     private var badge: Int { overdue > 0 ? overdue : pending }
@@ -31,6 +33,10 @@ struct OrbView: View {
 
     /// 悬停时轻微放大，按下时由外层缩回——形成"被按下去"的手感
     private var scale: CGFloat {
+        // 吸入过程走 OrbMotion 的曲线：先鼓一下再收，像被吸进面板。
+        if collapse > 0 {
+            return OrbMotion.scale(for: collapse)
+        }
         if expanded { return 1.0 }
         return hovering ? 1.04 : 1.0
     }
@@ -146,6 +152,9 @@ struct OrbView: View {
                 .mask(Circle().strokeBorder(lineWidth: 2.5))
         )
         .scaleEffect(scale)
+        // 吸入时同步淡出：光靠缩小不够，球在缩到一半时边缘会显得"硬"，
+        // 叠一层透明度让消失更柔和。
+        .opacity(OrbMotion.opacity(for: collapse))
         // 双层阴影：近处紧实的接触阴影 + 远处柔和的投影
         .shadow(color: .black.opacity(hovering ? 0.16 : 0.10), radius: 2, y: 1)
         .shadow(
@@ -156,6 +165,8 @@ struct OrbView: View {
         .animation(.spring(response: 0.30, dampingFraction: 0.70), value: hovering)
         .animation(.spring(response: 0.34, dampingFraction: 0.76), value: expanded)
         .animation(.spring(response: 0.38, dampingFraction: 0.80), value: badge)
+        // 吸入用略低的阻尼：允许一点过冲，"鼓一下再收"的弹性才明显
+        .animation(.spring(response: 0.26, dampingFraction: 0.62), value: collapse)
     }
 
     // MARK: 内容
@@ -286,6 +297,44 @@ final class FloatingOrb {
     func setExpanded(_ expanded: Bool) {
         hoverState?.expanded = expanded
         expanded ? fadeOut() : fadeIn()
+    }
+
+    /// 面板正在从球的位置展开：球先"鼓一下再被吸进去"。
+    ///
+    /// 和 setExpanded 分开，是因为时序不同：
+    /// 这里要让球的动作与面板的展开同步，球不能提前消失，
+    /// 否则用户看到的是"球没了，然后一个面板凭空出现"。
+    func beginAbsorb(duration: Double = 0.24) {
+        guard let hover = hoverState, let panel else { return }
+        hover.expanded = true
+
+        // 只驱动 SwiftUI 侧的 collapse，不碰窗口 alpha。
+        //
+        // 之前用 animator() 把 alpha 动画到 0，结果收起后球再也回不来：
+        // 实测 endAbsorb 里把 alpha 设回 1，0.35 秒后仍是 0——
+        // 窗口级 alpha 动画被打断后会停在终值，而且不再响应后续赋值。
+        // 让 SwiftUI 用 scaleEffect + opacity 表达，窗口 alpha 恒为 1。
+        hover.collapse = 1
+        panel.ignoresMouseEvents = true
+        _ = duration
+    }
+
+    /// 面板收起：球从面板方向"长回来"。
+    func endAbsorb() {
+        guard let hover = hoverState, let panel else { return }
+        // 复位到常态。窗口 alpha 保持 1，形变全在 SwiftUI 侧，
+        // 这样不会出现"球被设成透明后再也回不来"的问题。
+        hover.collapse = 0
+        panel.alphaValue = 1
+        if !panel.isVisible {
+            panel.orderFront(nil)
+        }
+        let target = NSSize(width: OrbMetrics.size, height: OrbMetrics.size)
+        if panel.frame.size != target {
+            panel.setFrame(NSRect(origin: panel.frame.origin, size: target), display: false)
+        }
+        panel.ignoresMouseEvents = false
+        bind()
     }
 
     private func fadeIn() {
@@ -621,6 +670,11 @@ final class OrbHover: ObservableObject {
     @Published var unread = 0
     /// 玻璃强度，跟随设置
     @Published var strength: Double = GlassAppearance.defaultStrength
+    /// 展开时的"吸入"进度：0 = 常态，1 = 完全收进面板。
+    ///
+    /// 单独一个量而不是复用 expanded：expanded 只是开关，
+    /// 驱不出"先鼓一下再收回去"这种带过冲的曲线。
+    @Published var collapse: CGFloat = 0
 
     private func sync() {}
 }
@@ -636,7 +690,8 @@ struct OrbContent: View {
             unread: hover.unread,
             expanded: hover.expanded,
             hovering: hover.isHovering,
-            strength: hover.strength
+            strength: hover.strength,
+            collapse: hover.collapse
         )
         .frame(width: OrbMetrics.size, height: OrbMetrics.size)
         .fixedSize()

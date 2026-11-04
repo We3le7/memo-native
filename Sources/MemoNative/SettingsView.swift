@@ -301,6 +301,33 @@ struct SettingsView: View {
                 .padding(.vertical, 12)
         }
         .frame(width: 430, height: 596)
+        // 与面板共用同一套玻璃：同样的材质、同样的强度、同样的圆角与描边。
+        //
+        // 之前设置窗是普通不透明 NSWindow，用系统背景，
+        // 和面板摆在一起像两个 App 的窗口。
+        .background(
+            ZStack {
+                VisualEffectBackground(settings: settings)
+                GlassVeil(strength: settings.glassStrength)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.30),
+                            Color.white.opacity(0.04),
+                            Color.black.opacity(0.10)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 0.75
+                )
+                .allowsHitTesting(false)
+        )
         .onAppear { snapshot.capture(from: settings) }
         // Esc 关闭设置，而不是把整个面板收起
         .onExitCommand { onClose() }

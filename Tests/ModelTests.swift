@@ -16,6 +16,7 @@ testUndoDelete()
 testOrbFreePosition()
 testGlassAppearance()
 testSpan()
+    testOrbMotion()
 
 // 1. 排序：日期 → 完成态 → 优先级
 let base = Memo(id: "x", title: "", priority: .normal, dueDate: "2026-11-05", note: "",
@@ -187,6 +188,44 @@ func testOrbMetrics() {
 }
 
 // MARK: - 数据损坏保护
+
+/// 悬浮球吸入曲线。
+///
+/// 这条曲线决定"球是被吸进去的还是被掐掉的"，参数很敏感：
+/// 峰值调没了就变成单纯缩小，收得不够就看着像卡住。
+func testOrbMotion() {
+    // 端点
+    check(abs(OrbMotion.scale(for: 0) - 1.0) < 0.0001, "吸入进度 0 时缩放应为 1")
+    check(OrbMotion.scale(for: 1) < 0.5, "吸入完成时应明显缩小，而不是停在半路")
+    check(OrbMotion.scale(for: 1) > 0.3, "也不能缩到看不见，得保留一点形体的记忆")
+
+    // 峰值：中段必须先超过 1（鼓起来），这是"灵动"的来源
+    let peakScale = OrbMotion.scale(for: OrbMotion.peak)
+    check(peakScale > 1.02, "峰值处应大于常态（鼓起），否则就是单纯缩小")
+    check(peakScale > OrbMotion.scale(for: 0.1), "0.1 处还没到峰，应该比峰值小")
+    check(peakScale > OrbMotion.scale(for: 0.7), "越过峰后应该回落")
+
+    // 单调性：过了峰值一路收，不能反弹
+    var previous = OrbMotion.scale(for: OrbMotion.peak)
+    var monotonic = true
+    for i in stride(from: Int(OrbMotion.peak * 100) + 5, through: 100, by: 5) {
+        let s = OrbMotion.scale(for: CGFloat(i) / 100)
+        if s > previous + 0.0001 { monotonic = false; break }
+        previous = s
+    }
+    check(monotonic, "过了峰值之后应单调收缩，不能来回弹")
+
+    // 透明度：单调下降，且不归零
+    check(abs(OrbMotion.opacity(for: 0) - 1.0) < 0.0001, "常态应完全不透明")
+    check(OrbMotion.opacity(for: 1) > 0.0, "淡出不该归零，否则窗口可能被判为不可见")
+    check(OrbMotion.opacity(for: 1) < 0.1, "但也要接近全透明，否则看着像没收进去")
+    check(OrbMotion.opacity(for: 0.5) < OrbMotion.opacity(for: 0.2), "透明度应随进度单调下降")
+
+    // 越界钳制：外部传入异常值不能算出离谱的形变
+    check(abs(OrbMotion.scale(for: -1) - 1.0) < 0.0001, "负进度应钳到 0")
+    check(OrbMotion.scale(for: 2) < 0.6, "超过 1 的进度应钳到 1 的效果")
+    check(abs(OrbMotion.opacity(for: -1) - 1.0) < 0.0001, "负进度的透明度应为 1")
+}
 
 @MainActor
 func testCorruptedFileProtection() {
@@ -419,5 +458,6 @@ func testSpan() {
         check(false, "add 应成功")
     }
     try? FileManager.default.removeItem(at: tmp)
-}
 
+
+}

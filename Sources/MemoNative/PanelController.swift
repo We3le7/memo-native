@@ -141,7 +141,10 @@ final class PanelController {
         } else {
             positionNearCursor()
         }
-        FloatingOrb.shared.setExpanded(true)   // 球淡出，让位给面板
+        // 球"被吸进面板"：鼓起再收缩淡出，与面板展开同时起势。
+        // 不能用瞬时的 setExpanded(true)——那样球一闪就没，
+        // 面板凭空出现，两者之间没有视觉接力。
+        FloatingOrb.shared.beginAbsorb(duration: 0.24)
         // 激活必须在 makeKey 之前完成，否则窗口拿到 key 的瞬间 App 还是非激活，
         // 系统会立刻补发一次 resignActive，把刚打开的面板又收起来。
         NSApp.activate(ignoringOtherApps: true)
@@ -161,7 +164,9 @@ final class PanelController {
         panel.makeKeyAndOrderFront(nil)
 
         DispatchQueue.main.async {
-            withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+            // 低阻尼换来过冲：面板会稍微"顶出去"再回位，
+            // 配合球的吸入动作，整体像一次有弹性的呼出。
+            withAnimation(.spring(response: 0.40, dampingFraction: 0.74)) {
                 self.unfold.progress = 1
             }
             // 兜底：spring 有时会在恢复了 key window / 触发重排之后
@@ -279,7 +284,9 @@ final class PanelController {
 
         // 同样只走 SwiftUI：progress 归 0 时内容缩回球的方向并淡到 0.15，
         // 窗口 alpha 保持 1，避免两套动画互相打断。
-        withAnimation(.spring(response: 0.26, dampingFraction: 0.90)) {
+        // 收起也带一点过冲，但比展开快、比展开收敛（damping 更高），
+        // 否则关闭动作会显得拖沓。
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
             unfold.progress = 0
         }
 
@@ -293,7 +300,7 @@ final class PanelController {
             guard let self else { return }
             target.orderOut(nil)
             self.unfold.progress = 1
-            FloatingOrb.shared.setExpanded(false)
+            FloatingOrb.shared.endAbsorb()
             self.isHiding = false
         }
 

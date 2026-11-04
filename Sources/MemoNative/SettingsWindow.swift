@@ -34,6 +34,8 @@ final class SettingsWindowController {
 
         // 首次打开定位一次；之后保留用户拖动过的位置
         if !hasPositioned {
+            // 定位前确保尺寸已经生效，否则可能按旧 frame 算出屏幕外的位置
+            window.setContentSize(NSSize(width: 430, height: 596))
             positionWindow(window)
             hasPositioned = true
         }
@@ -78,7 +80,22 @@ final class SettingsWindowController {
         window.isReleasedWhenClosed = false
         window.level = .floating
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        // 与面板同一套处理：窗口必须透明，behindWindow 材质才能采到桌面。
+        // 默认 isOpaque = true 会先铺一层不透明底，玻璃等于不存在。
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
         window.contentView = hosting
+
+        // 窗口本体裁圆角。SwiftUI 的 clipShape 裁不动 VisualEffectView
+        //（它是 AppKit view，铺满宿主矩形），必须给 frameView 加 layer 遮罩。
+        if let frameView = hosting.superview {
+            frameView.wantsLayer = true
+            frameView.layer?.cornerRadius = Theme.radius
+            frameView.layer?.cornerCurve = .continuous
+            frameView.layer?.masksToBounds = true
+        }
+
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
         // Esc 关闭
@@ -91,6 +108,7 @@ final class SettingsWindowController {
             hosting.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor),
         ])
 
+        window.setContentSize(NSSize(width: 430, height: 596))
         self.window = window
     }
 
