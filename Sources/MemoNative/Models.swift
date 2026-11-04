@@ -42,6 +42,12 @@ struct Memo: Codable, Identifiable, Equatable, Sendable {
     var title: String
     var priority: Priority
     var dueDate: String        // yyyy-MM-dd
+    /// 工期（天）。1 表示当天到期，3 表示到第 3 天结束前都不算逾期。
+    ///
+    /// 用可选类型而不是给默认值，是为了兼容老数据：
+    /// 早于这个字段写出的 JSON 里没有它，解码后是 nil，按 1 天处理。
+    /// 如果改成非可选，老文件会整份解码失败——那是用户数据，不能赌。
+    var span: Int?
     var note: String
     var done: Bool
     var createdAt: String      // ISO8601
@@ -49,14 +55,25 @@ struct Memo: Codable, Identifiable, Equatable, Sendable {
 
     var dueDateValue: Date { DateKey.date(from: dueDate) ?? Date() }
 
-    var dueLabel: DueLabel { DueLabel(dateKey: dueDate) }
+    /// 工期天数，至少 1
+    var spanDays: Int { max(1, span ?? 1) }
 
-    static func make(title: String, priority: Priority, dueDate: String) -> Memo {
+    /// 最后一天（含）。工期 1 天时等于 dueDate。
+    var endDate: String { DateKey.add(days: spanDays - 1, to: dueDate) }
+
+    /// 进度标签以"最后一天"为准：3 天的工期，第 2 天还不算逾期。
+    var dueLabel: DueLabel { DueLabel(dateKey: endDate) }
+
+    /// 是否跨多天（用于 UI 决定要不要显示"3 天"这类角标）
+    var isMultiDay: Bool { spanDays > 1 }
+
+    static func make(title: String, priority: Priority, dueDate: String, span: Int = 1) -> Memo {
         Memo(
             id: Self.newID(),
             title: title,
             priority: priority,
             dueDate: dueDate,
+            span: max(1, span),
             note: "",
             done: false,
             createdAt: ISO8601.string(from: Date()),
@@ -85,6 +102,15 @@ enum DateKey {
     static func date(from key: String) -> Date? { formatter.date(from: key) }
 
     static var today: String { string(from: Date()) }
+
+    /// 在日期键上加减天数，返回新的日期键。
+    /// 用 Calendar 而不是自己算 86400 秒：夏令时切换那天会差一小时，
+    /// 直接加秒数会把日期算错一天。
+    static func add(days: Int, to key: String) -> String {
+        guard let base = date(from: key),
+              let shifted = Calendar.current.date(byAdding: .day, value: days, to: base) else { return key }
+        return string(from: shifted)
+    }
 
     static func days(from key: String) -> Int {
         guard let target = date(from: key) else { return 0 }
@@ -276,13 +302,18 @@ final class MemoStore: ObservableObject {
     // MARK: 变更
 
     @discardableResult
-    func add(title: String, priority: Priority, dueDate: String) -> Memo? {
+    func add(title: String, priority: Priority, dueDate: String, span: Int = 1) -> Memo? {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             lastError = "请输入备忘内容"
             return nil
         }
-        let item = Memo.make(title: String(trimmed.prefix(200)), priority: priority, dueDate: dueDate)
+        let item = Memo.make(
+            title: String(trimmed.prefix(200)),
+            priority: priority,
+            dueDate: dueDate,
+            span: max(1, span)
+        )
         items.append(item)
         items = MemoSort.sorted(items)
         scheduleSave()
@@ -348,6 +379,11 @@ final class MemoStore: ObservableObject {
 
     func setPriority(_ id: String, to level: Priority) {
         update(id) { $0.priority = level }
+    }
+
+    /// 修改工期。允许顺带调整起始日，避免"改了工期却还从旧日期算"的歧义。
+    func setSpan(_ id: String, to days: Int) {
+        update(id) { $0.span = max(1, min(365, days)) }
     }
 
     var stats: (pending: Int, done: Int, overdue: Int, today: Int) {

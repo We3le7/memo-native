@@ -15,6 +15,7 @@ testCorruptedFileProtection()
 testUndoDelete()
 testOrbFreePosition()
 testGlassAppearance()
+testSpan()
 
 // 1. 排序：日期 → 完成态 → 优先级
 let base = Memo(id: "x", title: "", priority: .normal, dueDate: "2026-11-05", note: "",
@@ -357,3 +358,66 @@ func testGlassAppearance() {
     check(GlassAppearance.label(for: GlassAppearance.defaultStrength) == "标准",
           "默认强度应落在标准档")
 }
+
+/// 工期（span）语义。
+///
+/// 这是数据模型改动，出错会让「该逾期的不逾期」或「不该逾期的提前报红」，
+/// 用户会直接失去对提醒的信任，所以逐条钉住。
+@MainActor
+func testSpan() {
+    let today = DateKey.today
+    let yesterday = DateKey.add(days: -1, to: today)
+    let twoAgo = DateKey.add(days: -2, to: today)
+    let threeAgo = DateKey.add(days: -3, to: today)
+
+    // 默认 1 天，行为与改造前一致
+    let single = Memo.make(title: "A", priority: .normal, dueDate: today)
+    check(single.spanDays == 1, "默认工期为 1 天")
+    check(single.endDate == today, "1 天工期：结束日 = 起始日")
+    check(!single.isMultiDay, "1 天工期不算多天")
+
+    // 老数据兼容：span 为 nil 时按 1 天算，不能崩也不能当成 0
+    var legacy = Memo.make(title: "B", priority: .normal, dueDate: today)
+    legacy.span = nil
+    check(legacy.spanDays == 1, "老数据没有 span 字段时按 1 天处理")
+
+    // 工期 3 天：前两天不该逾期
+    let s3 = Memo.make(title: "C", priority: .normal, dueDate: twoAgo, span: 3)
+    check(s3.spanDays == 3, "工期为 3")
+    check(s3.isMultiDay, "3 天应被标记为多天")
+    check(s3.endDate == today, "前天开始 + 3 天 → 今天结束")
+    check(!s3.dueLabel.isOverdue, "★ 3 天工期的最后一天不该算逾期")
+
+    // 超过工期才逾期，且逾期天数从结束日算
+    let late = Memo.make(title: "D", priority: .normal, dueDate: threeAgo, span: 3)
+    check(late.endDate == yesterday, "3 天前开始 + 3 天 → 昨天结束")
+    check(late.dueLabel.isOverdue, "超过工期后应逾期")
+    check(late.dueLabel.text == "逾期 1 天", "逾期天数按结束日算，不是起始日")
+
+    // 边界：非法值要被钳住
+    let zero = Memo.make(title: "E", priority: .normal, dueDate: today, span: 0)
+    check(zero.spanDays == 1, "工期 0 应被钳成 1 天")
+    let negative = Memo.make(title: "F", priority: .normal, dueDate: today, span: -5)
+    check(negative.spanDays == 1, "负工期应被钳成 1 天")
+
+    // 日期加法要跨月正确（用 Calendar，不是加秒数）
+    check(DateKey.add(days: 1, to: "2026-01-31") == "2026-02-01", "跨月加一天")
+    check(DateKey.add(days: 1, to: "2026-12-31") == "2027-01-01", "跨年加一天")
+    check(DateKey.add(days: -1, to: "2026-03-01") == "2026-02-28", "跨月减一天")
+    check(DateKey.add(days: 0, to: today) == today, "加 0 天不变")
+
+    // store 层：setSpan 要写进数据
+    let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("span-\(UUID().uuidString).json")
+    let store = MemoStore(fileURL: tmp)
+    if let added = store.add(title: "测试", priority: .normal, dueDate: today, span: 5) {
+        check(store.items.first { $0.id == added.id }?.spanDays == 5, "add 应保存工期")
+        store.setSpan(added.id, to: 2)
+        check(store.items.first { $0.id == added.id }?.spanDays == 2, "setSpan 应更新工期")
+        store.setSpan(added.id, to: 0)
+        check(store.items.first { $0.id == added.id }?.spanDays == 1, "setSpan 应钳住非法值")
+    } else {
+        check(false, "add 应成功")
+    }
+    try? FileManager.default.removeItem(at: tmp)
+}
+

@@ -3,6 +3,18 @@ import Carbon.HIToolbox
 import SwiftUI
 import Combine
 
+/// 驱动面板展开/收起的形变进度。
+///
+/// 单独抽出来而不是直接改 ContentView 的属性：
+/// NSHostingView 的 rootView 是值类型，改一次要整体重建，
+/// 会把 @StateObject 和输入焦点一起重置——打字打到一半面板重建就丢焦点了。
+/// 用一个外面持有的 ObservableObject，只推送进度变化，视图身份不变。
+@MainActor
+final class UnfoldState: ObservableObject {
+    @Published var progress: CGFloat = 1
+    @Published var anchor: UnitPoint = .center
+}
+
 /// 无边框浮动面板：可成为 key window 以便输入，同时不抢 Dock、不打断当前 App。
 final class MemoPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -63,6 +75,8 @@ final class PanelController {
     static let shared = PanelController()
 
     private var panel: MemoPanel?
+    /// 展开/收起的形变状态，跨窗口共享
+    let unfold = UnfoldState()
     private var store: MemoStore?
     private var settings: AppSettings?
     private var escapeMonitor: Any?
@@ -131,7 +145,40 @@ final class PanelController {
         // 激活必须在 makeKey 之前完成，否则窗口拿到 key 的瞬间 App 还是非激活，
         // 系统会立刻补发一次 resignActive，把刚打开的面板又收起来。
         NSApp.activate(ignoringOtherApps: true)
+
+        // 展开动效：从 0 起势。锚点要在窗口落位之后才知道，所以放在 position 之后。
+        if let orbFrame = FloatingOrb.shared.currentFrame, FloatingOrb.shared.isVisible {
+            unfold.anchor = unfoldAnchor(panel: panel, orbFrame: orbFrame)
+        } else {
+            unfold.anchor = .center
+        }
+        // 淡入只走 SwiftUI 的 opacity，不再动窗口 alphaValue。
+        // 两边同时驱动同一个视觉通道会打架：实测窗口 animator() 的动画
+        // 被打断后停在 0，面板就再也不可见了。
+        panel.alphaValue = 1
+        unfold.progress = 0
+
         panel.makeKeyAndOrderFront(nil)
+
+        DispatchQueue.main.async {
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                self.unfold.progress = 1
+            }
+            if ProcessInfo.processInfo.environment["MEMO_DEBUG"] != nil {
+                FileHandle.standardError.write(
+                    "AFTER_SHOW visible=\(panel.isVisible) alpha=\(panel.alphaValue) progress=\(self.unfold.progress)\n".data(using: .utf8)!)
+            }
+            // 兜底：spring 有时会在恢复了 key window / 触发重排之后
+            // 停在中间值（实测卡在 0.857），面板就永远是 588×648 而不是 600×660。
+            // 动画时长过后直接把终值钉死，保证最终状态是确定的。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                if self.unfold.progress != 1 {
+                    self.unfold.progress = 1
+                }
+                // 窗口尺寸兜底：scaleEffect 会让 NSHostingView 上报缩放后的尺寸，
+                // 窗口可能被系统改成 588×648。面板是固定尺寸浮窗，这里钉死回 600×660。
+            }
+        }
         // 激活是异步的：下一轮 runloop 再确认一次 key，避免"启动即收起"
         DispatchQueue.main.async {
             panel.makeKeyAndOrderFront(nil)
@@ -147,7 +194,13 @@ final class PanelController {
 
     private func buildPanel(store: MemoStore, settings: AppSettings) {
         let view = ContentView(store: store, settings: settings)
+            .environmentObject(unfold)
         let hosting = NSHostingView(rootView: view)
+        // 不让 hosting 反推窗口尺寸。
+        // 默认行为下 SwiftUI 会把内容尺寸报给窗口，而展开动效用 scaleEffect
+        // 缩放了内容，窗口就跟着一起缩水——实测稳定在 588×648 而不是 600×660。
+        // 面板是固定尺寸的浮窗，尺寸该由自己说了算。
+        hosting.sizingOptions = []
         let panel = MemoPanel(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 660),
             styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
@@ -202,10 +255,37 @@ final class PanelController {
         guard let panel, !isHiding else { return }
         isHiding = true
 
-        panel.orderOut(nil)
+        // 收回动效：内容缩回球的方向，同时淡出，播完再真正隐藏窗口。
+        // 顺序很重要——先 orderOut 就看不到动画了；
+        // 但也不能无限等，用固定时长兜底，避免动画被系统打断后窗口卡在屏幕上。
+        let orbFrame = FloatingOrb.shared.currentFrame
+        if let orbFrame, FloatingOrb.shared.isVisible {
+            unfold.anchor = unfoldAnchor(panel: panel, orbFrame: orbFrame)
+        }
+
+        // 同样只走 SwiftUI：progress 归 0 时内容缩回球的方向并淡到 0.15，
+        // 窗口 alpha 保持 1，避免两套动画互相打断。
+        withAnimation(.spring(response: 0.26, dampingFraction: 0.90)) {
+            unfold.progress = 0
+        }
+
         applyLevel(active: false)
         removeEscapeMonitor()
-        FloatingOrb.shared.setExpanded(false)  // 球回来，面板已收起
+
+        // 动画播完再真正撤窗口、把球叫回来。
+        // 顺序必须是"面板先缩、球后现"，反过来会看到球和面板重叠一瞬。
+        let target = panel
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
+            guard let self else { return }
+            target.orderOut(nil)
+            if ProcessInfo.processInfo.environment["MEMO_DEBUG"] != nil {
+                FileHandle.standardError.write(
+                    "AFTER_HIDE visible=\(target.isVisible) progress=\(self.unfold.progress)\n".data(using: .utf8)!)
+            }
+            self.unfold.progress = 1
+            FloatingOrb.shared.setExpanded(false)
+            self.isHiding = false
+        }
 
         // 注意：不要用 NSApp.hide(nil)，那会把整个 App（连同 Dock 图标）一起藏起来，
         // 导致再次呼出时窗口联动错乱。
@@ -217,7 +297,6 @@ final class PanelController {
             previous.activate()
         }
         previousApp = nil
-        isHiding = false
     }
 
     // MARK: 焦点与窗口联动
@@ -327,6 +406,21 @@ final class PanelController {
 
     /// 面板贴着悬浮球展开：优先放在球的左侧（球默认在右边），
     /// 放不下就翻到右侧；垂直居中对齐球心，再夹取到屏幕可见区。
+    /// 算出球相对面板中心的方位，转成 SwiftUI 的 UnitPoint。
+    ///
+    /// 面板会贴在球的一侧，所以锚点几乎总在左或右边缘。
+    /// 用 0.06/0.94 而不是 0/1：紧贴边缘时缩放会露出窗口直角，
+    /// 稍微往里收一点，视觉上更干净。
+    private func unfoldAnchor(panel: NSWindow, orbFrame: NSRect) -> UnitPoint {
+        let f = panel.frame
+        guard f.width > 0, f.height > 0 else { return .center }
+        let dx = orbFrame.midX - f.midX
+        let dy = orbFrame.midY - f.midY
+        let ax = dx < -f.width * 0.2 ? 0.06 : (dx > f.width * 0.2 ? 0.94 : 0.5)
+        let ay = dy < -f.height * 0.2 ? 0.06 : (dy > f.height * 0.2 ? 0.94 : 0.5)
+        return UnitPoint(x: ax, y: ay)
+    }
+
     private func positionNearOrb(_ orbFrame: NSRect) {
         guard let panel else { return }
         let size = panel.frame.size

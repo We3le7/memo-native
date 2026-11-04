@@ -14,6 +14,8 @@ final class ComposerState: ObservableObject {
     @Published var priority: Priority = .normal
     @Published var dueMode: DueMode = .today
     @Published var customDate: Date = Date()
+    /// 新事项的工期（天）
+    @Published var span: Int = 1
     @Published var filter: Filter = .all
     @Published var editingID: String?
     @Published var editingText: String = ""
@@ -100,6 +102,11 @@ struct ContentView: View {
     @StateObject private var ui = ComposerState()
     @FocusState private var inputFocused: Bool
 
+    /// 展开形变状态。用 EnvironmentObject 而不是普通属性：
+    /// rootView 是值类型，每次改属性都会重建 NSHostingView，
+    /// 把 @StateObject 与输入焦点一起丢掉。共享一个 object 只推送变化，视图身份不变。
+    @EnvironmentObject private var unfold: UnfoldState
+
     private var visibleItems: [Memo] {
         switch ui.filter {
         case .all:
@@ -123,6 +130,19 @@ struct ContentView: View {
             footer
         }
         .frame(minWidth: 520, idealWidth: 600, minHeight: 460, idealHeight: 660)
+        // 展开形变：从球所在方位长出来。
+        //
+        // 缩放中心用球相对面板的方位，而不是恒定的 .center——
+        // 球在左边时从左边展开，球在上方时从上方展开，
+        // 视觉上"起点"才和球对得上，用户看到的是连贯的一次变形。
+        //
+        // 缩放只做到 0.86 而不是 0：再小就会露出窗口边缘的直角，
+        // 玻璃的圆角在极小尺寸下也会失真，反而显得廉价。
+        .scaleEffect(
+            0.86 + 0.14 * unfold.progress,
+            anchor: unfold.anchor
+        )
+        .opacity(0.15 + 0.85 * Double(unfold.progress))
         .background(
             ZStack {
                 VisualEffectBackground(settings: settings)
@@ -352,6 +372,9 @@ struct ContentView: View {
 
                 Spacer(minLength: 8)
 
+                SpanField(span: $ui.span)
+                    .padding(.trailing, 8)
+
                 // 优先级：四档并排，带文字与色块。
                 // 原来只有 17×17 的圆点，既难看清也难点中，这里整体放大。
                 PriorityPicker(selected: $ui.priority)
@@ -437,6 +460,11 @@ struct ContentView: View {
                                             }
                                         },
                                         onCyclePriority: { cyclePriority(item) },
+                                        onSetSpan: { days in
+                                            withAnimation(.easeOut(duration: 0.16)) {
+                                                store.setSpan(item.id, to: days)
+                                            }
+                                        },
                                         onSetPriority: { level in
                                             withAnimation(.easeOut(duration: 0.16)) {
                                                 store.setPriority(item.id, to: level)
@@ -560,9 +588,11 @@ struct ContentView: View {
         guard !text.isEmpty else { return }
         let dueKey = ui.resolvedDueKey
         withAnimation(.spring(response: 0.36, dampingFraction: 0.84)) {
-            _ = store.add(title: text, priority: ui.priority, dueDate: dueKey)
+            _ = store.add(title: text, priority: ui.priority, dueDate: dueKey, span: ui.span)
             ui.draft = ""
             ui.dueMode = .today
+            // 工期不重置：连续录入同类事项时，通常还是同样的工期
+            
         }
         ui.flash("已记录")
     }
@@ -913,6 +943,7 @@ struct MemoRow: View {
     let onToggle: () -> Void
     let onDelete: () -> Void
     let onCyclePriority: () -> Void
+    let onSetSpan: (Int) -> Void
     let onSetPriority: (Priority) -> Void
     let onBeginEdit: () -> Void
     let onCommitEdit: () -> Void
@@ -1044,17 +1075,53 @@ struct MemoRow: View {
     private var metaLine: some View {
         HStack(spacing: 6) {
             if !item.done {
-                Text(item.priority.label)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(item.priority.tint)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1.5)
-                    .background(
-                        Capsule().fill(item.priority.tint.opacity(0.12))
-                    )
-                    .overlay(
-                        Capsule().strokeBorder(item.priority.tint.opacity(0.18), lineWidth: Theme.hairline)
-                    )
+                // 优先级胶囊：仍是只读标签的样子，但悬停时右侧直接摊开四个色点。
+                //
+                // 为什么不用 Menu：这个面板是 nonactivating panel，
+                // NSMenu 在它上面时常弹不出来（日期选择器踩过同一个坑）。
+                // 纯视图内的展开-点选没有这层依赖，响应也更快。
+                HStack(spacing: 4) {
+                    Text(item.priority.label)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(item.priority.tint)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(
+                            Capsule().fill(item.priority.tint.opacity(hover.hovering ? 0.18 : 0.12))
+                        )
+                        .overlay(
+                            Capsule().strokeBorder(item.priority.tint.opacity(0.18), lineWidth: Theme.hairline)
+                        )
+
+                    // 四个色点：当前档位实心，其余空心，点一下即改。
+                    if hover.hovering {
+                        HStack(spacing: 3) {
+                            ForEach(Priority.allCases) { level in
+                                Button {
+                                    onSetPriority(level)
+                                } label: {
+                                    Circle()
+                                        .fill(level == item.priority
+                                              ? level.tint
+                                              : level.tint.opacity(0.22))
+                                        .frame(width: 6, height: 6)
+                                        .overlay(
+                                            Circle().strokeBorder(
+                                                level.tint.opacity(level == item.priority ? 0 : 0.5),
+                                                lineWidth: 0.6
+                                            )
+                                        )
+                                        // 命中区比视觉尺寸大一圈，不用瞄准
+                                        .contentShape(Circle().inset(by: -3.5))
+                                }
+                                .buttonStyle(.plain)
+                                .help(level.label)
+                            }
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .leading)))
+                    }
+                }
+                .animation(.easeOut(duration: 0.14), value: hover.hovering)
             }
 
             Text(item.dueLabel.text)
@@ -1064,6 +1131,54 @@ struct MemoRow: View {
                         ? Priority.urgent.tint
                         : Theme.inkTertiary
                 )
+
+            // 工期角标：多天的事项才显示，避免单日事项被噪声污染。
+            // 悬停时摊开「−/+」，直接加减，不走系统菜单。
+            if item.isMultiDay {
+                HStack(spacing: 3) {
+                    HStack(spacing: 2) {
+                        Image(systemName: "calendar.badge.clock")
+                            .font(.system(size: 7.5, weight: .medium))
+                        Text("\(item.spanDays) 天")
+                            .font(.system(size: 9, weight: .medium))
+                            .monospacedDigit()
+                    }
+                    .foregroundStyle(Theme.inkSecondary)
+                    .padding(.horizontal, 4.5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Theme.surface))
+
+                    if hover.hovering && !item.done {
+                        HStack(spacing: 2) {
+                            Button { onSetSpan(item.spanDays - 1) } label: {
+                                Image(systemName: "minus")
+                                    .font(.system(size: 7, weight: .bold))
+                                    .frame(width: 12, height: 12)
+                                    .background(Circle().fill(Theme.surfaceHover))
+                                    .foregroundStyle(Theme.inkSecondary)
+                                    .contentShape(Circle().inset(by: -2))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(item.spanDays <= 1)
+                            .opacity(item.spanDays <= 1 ? 0.35 : 1)
+                            .help("缩短一天")
+
+                            Button { onSetSpan(item.spanDays + 1) } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 7, weight: .bold))
+                                    .frame(width: 12, height: 12)
+                                    .background(Circle().fill(Theme.surfaceHover))
+                                    .foregroundStyle(Theme.inkSecondary)
+                                    .contentShape(Circle().inset(by: -2))
+                            }
+                            .buttonStyle(.plain)
+                            .help("延长一天")
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .leading)))
+                    }
+                }
+                .animation(.easeOut(duration: 0.14), value: hover.hovering)
+            }
 
             if let created = UILogic.createdTimeText(item.createdAt) {
                 Text("·")
@@ -1186,4 +1301,67 @@ extension Notification.Name {
     static let memoMenuBarVisibilityChanged = Notification.Name("memo.menuBarVisibility")
     static let memoGlassStrengthChanged = Notification.Name("memo.glassStrengthChanged")
     static let memoOpenSettings = Notification.Name("memo.openSettings")
+}
+
+// MARK: - 工期选择
+
+/// 工期：一件事要占用几天。
+///
+/// 做成「点一下开小面板」而不是下拉菜单，是因为这个面板本身是
+/// nonactivating panel，系统的 NSPopUpButton / Menu 在它上面
+/// 经常打不开（同样的坑在日期选择上已经踩过）。
+struct SpanField: View {
+    @Binding var span: Int
+    @StateObject private var hover = HoverFlag()
+
+    private static let presets = [1, 2, 3, 5, 7]
+    private var title: String { span <= 1 ? "当天" : "\(span) 天" }
+
+    var body: some View {
+        // 同样不走系统菜单：改成点一下就地展开一排天数。
+        // 面板是 nonactivating panel，NSMenu 在这上面不可靠。
+        HStack(spacing: 3) {
+            if hover.on {
+                HStack(spacing: 1) {
+                    ForEach(Self.presets, id: \.self) { d in
+                        Button {
+                            span = d
+                        } label: {
+                            Text(d <= 1 ? "1" : "\(d)")
+                                .font(.system(size: 9.5, weight: span == d ? .semibold : .regular))
+                                .monospacedDigit()
+                                .foregroundStyle(span == d ? Theme.accent : Theme.inkSecondary)
+                                .frame(width: 15, height: 15)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                        .fill(span == d ? Theme.accent.opacity(0.16) : Color.clear)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .help(d <= 1 ? "当天完成" : "\(d) 天")
+                    }
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .trailing)))
+            }
+
+            HStack(spacing: 4) {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 9.5, weight: .medium))
+                Text(title)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(hover.on ? Theme.ink : Theme.inkSecondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(hover.on ? Theme.surfaceHover : Theme.surface))
+        }
+        .animation(.easeOut(duration: 0.14), value: hover.on)
+        .onHover { hover.on = $0 }
+        .help("工期：这件事要占用几天")
+    }
+}
+
+final class HoverFlag: ObservableObject {
+    @Published var on = false
 }
