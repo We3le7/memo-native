@@ -251,6 +251,7 @@ final class FloatingOrb {
     /// 面板据此决定从哪儿展开
     var currentFrame: NSRect? { panel?.frame }
 
+
     func configure(store: MemoStore, settings: AppSettings) {
         self.store = store
         self.settings = settings
@@ -315,8 +316,13 @@ final class FloatingOrb {
         addAbsorbAnimation(to: panel, absorbing: true, duration: duration)
     }
 
-    /// 面板收起：球从面板方向"长回来"。
-    func endAbsorb() {
+    /// 面板收起：球缓缓浮现。
+    ///
+    /// - Parameter duration: 浮现时长。由调用方传入与面板收起相同的时长，
+    ///   两者共用同一条时间轴——球和面板同时起势，面板缩完的同时球刚好浮现完毕。
+    ///   原来这里是写死的 0.26s，而且由 hide() 在面板收完之后才调用，
+    ///   中间有一段"什么都没发生"的空白，看起来是面板先消失、球再突然冒出来。
+    func endAbsorb(duration: Double = 0.34) {
         guard let panel else { return }
         hoverState?.collapse = 0
         panel.alphaValue = 1
@@ -328,8 +334,31 @@ final class FloatingOrb {
             panel.setFrame(NSRect(origin: panel.frame.origin, size: target), display: false)
         }
         panel.ignoresMouseEvents = false
-        addAbsorbAnimation(to: panel, absorbing: false, duration: 0.26)
+        addAbsorbAnimation(to: panel, absorbing: false, duration: duration)
         bind()
+
+        // 兜底：浮现动画如果被打断（窗口被系统隐藏、App 失活等），
+        // 球会停在半透明状态再也看不清——这是踩过的坑。
+        // 动画时长过后把图层状态钉死到"完全可见"。
+        if let layer = panel.contentView?.layer {
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.05) {
+                layer.removeAnimation(forKey: "absorbScale")
+                layer.removeAnimation(forKey: "absorbFade")
+                layer.transform = CATransform3DIdentity
+                layer.opacity = 1
+            }
+        }
+    }
+
+    /// 让球从"几乎不可见"的状态开始浮现，供面板收起时同步调用。
+    ///
+    /// 和 endAbsorb 的区别：这个不 orderFront、不动窗口尺寸，
+    /// 只把图层的起始状态压到 0，避免第一帧闪一下满尺寸的球。
+    func primeForReveal() {
+        guard let panel, let layer = panel.contentView?.layer else { return }
+        layer.removeAnimation(forKey: "absorbScale")
+        layer.removeAnimation(forKey: "absorbFade")
+        layer.opacity = 0
     }
 
     /// 球的吸入/长出动画。

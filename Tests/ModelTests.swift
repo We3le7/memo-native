@@ -19,6 +19,7 @@ testSpan()
     testOrbMotion()
     testOrbStateResets()
     testUnfoldAnchor()
+    testFoldIsInverseOfUnfold()
     testPriorityBreakdown()
 
 // 1. 排序：日期 → 完成态 → 优先级
@@ -348,6 +349,52 @@ func testUnfoldAnchor() {
         check(a.x >= 0.0 && a.x <= 1.0 && a.y >= 0.0 && a.y <= 1.0,
               "锚点 (\(tx),\(ty)) 应在 0…1 内")
     }
+}
+
+@MainActor
+
+
+/// 折叠必须是展开的严格逆过程。
+///
+/// 这里出过问题：展开用一套参数（0.34s / 34 帧 / 阻尼 0.74），
+/// 折叠自己一套（0.24s / 30 帧 / 阻尼 0.92）。展开带过冲、
+/// 收起近似线性，同一个动作正反播出来手感对不上，
+/// 用户会觉得"收起和展开不是一回事"。
+func testFoldIsInverseOfUnfold() {
+    let count = 34
+    let damping: CGFloat = 0.74
+
+    // 展开的采样序列
+    let forward = MotionCurve.springValues(from: 0.06, to: 1.0, damping: damping, count: count)
+    // 折叠应当是它的逆序
+    let backward = Array(forward.reversed())
+
+    check(forward.count == count, "展开应有 \(count) 个采样点")
+    check(backward.count == count, "折叠应有同样多的采样点")
+
+    // 首尾必须精确对应
+    check(abs(forward.first! - 0.06) < 0.0001, "展开应从 0.06 起")
+    check(abs(forward.last! - 1.0) < 0.0001, "展开应到 1.0 止")
+    check(abs(backward.first! - 1.0) < 0.0001, "折叠应从 1.0 起")
+    check(abs(backward.last! - 0.06) < 0.0001, "折叠应到 0.06 止")
+
+    // 逐点互为镜像
+    for i in 0..<count {
+        check(abs(backward[i] - forward[count - 1 - i]) < 0.0001,
+              "第 \(i) 个采样点应是展开对应点的镜像")
+    }
+
+    // 过冲也必须镜像：展开在中后段超过 1，折叠就该在对应位置超过 1
+    let forwardPeak = forward.max() ?? 0
+    let backwardPeak = backward.max() ?? 0
+    check(forwardPeak > 1.01, "展开应有可见的过冲")
+    check(abs(forwardPeak - backwardPeak) < 0.0001, "折叠的过冲峰值应与展开相同")
+
+    // 关键帧时刻也要对称
+    let kt = MotionCurve.keyTimes(count: count)
+    check(abs(kt.first!.doubleValue - 0.0) < 0.0001, "关键帧应从 0 开始")
+    check(abs(kt.last!.doubleValue - 1.0) < 0.0001, "关键帧应到 1 结束")
+    check(kt.count == count, "关键帧数量应与采样点一致")
 }
 
 @MainActor

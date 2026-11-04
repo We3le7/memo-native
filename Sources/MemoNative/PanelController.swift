@@ -271,29 +271,33 @@ final class PanelController {
         // 顺序很重要——先 orderOut 就看不到动画了；
         // 但也不能无限等，用固定时长兜底，避免动画被系统打断后窗口卡在屏幕上。
         // 缩回球的位置：Core Animation 驱动，与展开对称。
+        let foldDuration = Self.slowFactor * PanelController.unfoldDuration
+
         FrameProbe.shared.start("折叠")
         playFold()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + foldDuration + 0.06) {
             FrameProbe.shared.stop()
         }
+
+        // 球和面板同时起势：面板往球的位置收缩，球从那个位置缓缓浮现。
+        //
+        // 原来是"面板收完之后再叫球出来"，中间有一段什么都没有的空白，
+        // 观感是面板消失、然后球突然冒出来。现在两者共用一条时间轴，
+        // 面板缩小的过程就是球变清楚的过程。
+        FloatingOrb.shared.primeForReveal()
+        FloatingOrb.shared.endAbsorb(duration: foldDuration)
 
         applyLevel(active: false)
         removeEscapeMonitor()
 
-        // 动画播完再真正撤窗口、把球叫回来。
-        // 顺序必须是"面板先缩、球后现"，反过来会看到球和面板重叠一瞬。
+
+        // 动画播完再真正撤窗口。
+        // 多留 0.04s 余量：动画稍慢或系统繁忙时，"啪"地消失会很扎眼。
         let target = panel
-        // 等折叠动画真正播完再撤窗口。
-        //
-        // 折叠动画 0.24s，原来这里只等 0.26s，余量 0.02s——太紧，
-        // 动画稍慢或系统繁忙就会看到面板"啪"地消失。
-        // 留到 0.30s，并且折叠结束后必须把图层复位，
-        // 否则下次展开会从缩小状态起手，第一帧就跳一下。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + foldDuration + 0.04) { [weak self] in
             guard let self else { return }
             target.orderOut(nil)
             self.resetLayer(afterFold: true)
-            FloatingOrb.shared.endAbsorb()
             self.isHiding = false
         }
 
@@ -433,6 +437,15 @@ final class PanelController {
         )
     }
 
+    /// 展开/折叠共用的形变参数。
+    ///
+    /// 折叠是展开的逆过程，两边必须用同一份常量——
+    /// 之前各写一套，改了一边忘了另一边，正反播出来手感对不上。
+    private static let unfoldDuration: CFTimeInterval = 0.34
+    private static let unfoldStartScale: CGFloat = 0.06
+    private static let unfoldFrames = 34
+    private static let unfoldDamping: CGFloat = 0.74
+
     /// 诊断用：把动效整体放慢，便于逐帧截图核对轨迹。
     static let slowFactor: Double = {
         guard let v = ProcessInfo.processInfo.environment["MEMO_SLOW"],
@@ -457,14 +470,17 @@ final class PanelController {
 
         // 从小长到大 + 淡入。0.62 是能看清形变又不拖沓的下限；
         // 再小就只剩"闪一下"，看不出是从球那里长出来的。
-        let startScale: CGFloat = 0.06
-        let duration: CFTimeInterval = Self.slowFactor * 0.34
+        let startScale = PanelController.unfoldStartScale
+        let duration: CFTimeInterval = Self.slowFactor * PanelController.unfoldDuration
 
         let scaleAnim = CAKeyframeAnimation(keyPath: "transform.scale")
         scaleAnim.values = MotionCurve.springValues(
-            from: startScale, to: 1.0, damping: 0.74, count: 34
+            from: startScale,
+            to: 1.0,
+            damping: PanelController.unfoldDamping,
+            count: PanelController.unfoldFrames
         ).map { NSNumber(value: Double($0)) }
-        scaleAnim.keyTimes = MotionCurve.keyTimes(count: 34)
+        scaleAnim.keyTimes = MotionCurve.keyTimes(count: PanelController.unfoldFrames)
         scaleAnim.duration = duration
         scaleAnim.timingFunction = CAMediaTimingFunction(name: .linear)
         scaleAnim.fillMode = .forwards
@@ -484,6 +500,7 @@ final class PanelController {
         // 动画结束后把模型值钉到终态，避免 isRemovedOnCompletion 造成的回弹
         layer.transform = CATransform3DIdentity
         layer.opacity = 1
+
 
 
 
@@ -527,23 +544,30 @@ final class PanelController {
             ?? CGPoint(x: 0.5, y: 0.5)
         container.applyAnchor(anchor)
 
-        let endScale: CGFloat = 0.06
-        // 收起比展开快：关闭是"确认"动作，拖沓会烦
-        let duration: CFTimeInterval = Self.slowFactor * 0.24
+        // 折叠是展开的**严格逆过程**：同一条曲线、同样帧数、同样的淡出关键帧，
+        // 只是把采样值倒过来用。
+        //
+        // 之前折叠是自己一套参数（0.24s / 30 帧 / 阻尼 0.92），和展开
+        // （0.34s / 34 帧 / 阻尼 0.74）完全不对称——展开带过冲、收起近似线性，
+        // 同一个动作正反播出来手感对不上。
+        let duration: CFTimeInterval = Self.slowFactor * PanelController.unfoldDuration
+        let frames = PanelController.unfoldFrames
+        let startScale = PanelController.unfoldStartScale
 
         let scaleAnim = CAKeyframeAnimation(keyPath: "transform.scale")
         scaleAnim.values = MotionCurve.springValues(
-            from: 1.0, to: endScale, damping: 0.92, count: 30
-        ).map { NSNumber(value: Double($0)) }
-        scaleAnim.keyTimes = MotionCurve.keyTimes(count: 30)
+            from: startScale, to: 1.0, damping: PanelController.unfoldDamping, count: frames
+        ).reversed().map { NSNumber(value: Double($0)) }
+        scaleAnim.keyTimes = MotionCurve.keyTimes(count: frames)
         scaleAnim.duration = duration
         scaleAnim.timingFunction = CAMediaTimingFunction(name: .linear)
         scaleAnim.fillMode = .forwards
         scaleAnim.isRemovedOnCompletion = false
 
         let fadeAnim = CAKeyframeAnimation(keyPath: "opacity")
-        fadeAnim.values = [1.0, 0.9, 0.45, 0.0]
-        fadeAnim.keyTimes = [0, 0.25, 0.6, 1.0]
+        // 与展开的 [0, 0.55, 0.88, 1, 1] 严格互补
+        fadeAnim.values = [1.0, 1.0, 0.88, 0.55, 0.0]
+        fadeAnim.keyTimes = [0, 0.38, 0.55, 0.78, 1.0]
         fadeAnim.duration = duration
         fadeAnim.fillMode = .forwards
         fadeAnim.isRemovedOnCompletion = false
