@@ -18,6 +18,7 @@ testGlassAppearance()
 testSpan()
     testOrbMotion()
     testOrbStateResets()
+    testUnfoldAnchor()
     testPriorityBreakdown()
 
 // 1. 排序：日期 → 完成态 → 优先级
@@ -304,6 +305,49 @@ func testOrbStateResets() {
     // （对应视图里的 isYielding = collapse > 0.001）
     check(!(0.0 > 0.001), "collapse=0 时不该被判为让位状态——判为让位就会隐藏数字")
     check(1.0 > 0.001, "collapse=1 时应判为让位")
+}
+
+@MainActor
+
+
+/// 面板展开的锚点。
+///
+/// "从悬浮球的位置展开"这个效果全靠这个锚点：
+/// 它决定缩放围绕哪一点发生。算错了不会崩，
+/// 只会让面板从某个角落挤出来，看着很怪。
+func testUnfoldAnchor() {
+    let panel = CGRect(x: 788, y: 84, width: 600, height: 660)
+
+    // 球在面板右侧偏上（实测位置）
+    let a1 = MotionCurve.anchor(for: panel, toward: CGPoint(x: 1421, y: 603))
+    check(a1.x > 0.85, "球在面板右侧，锚点应靠右")
+    check(a1.y > 0.55 && a1.y < 0.90, "球在偏上位置，锚点 y 应偏上但不贴边")
+
+    // 球在正中央
+    let center = CGPoint(x: panel.midX, y: panel.midY)
+    let a2 = MotionCurve.anchor(for: panel, toward: center)
+    check(abs(a2.x - 0.5) < 0.001 && abs(a2.y - 0.5) < 0.001, "球在中心时锚点应为 0.5,0.5")
+
+    // 球在左下角外侧：必须被夹住，不能出界
+    let a3 = MotionCurve.anchor(for: panel, toward: CGPoint(x: -500, y: -500))
+    check(a3.x >= 0.08 && a3.y >= 0.08, "越界左下应夹到 0.08")
+    check(a3.x <= 0.92 && a3.y <= 0.92, "夹取后不能超过 0.92")
+
+    // 球在右上角外侧
+    let a4 = MotionCurve.anchor(for: panel, toward: CGPoint(x: 5000, y: 5000))
+    check(abs(a4.x - 0.92) < 0.001, "越界右上应夹到 0.92")
+    check(abs(a4.y - 0.92) < 0.001, "越界右上应夹到 0.92")
+
+    // 退化尺寸：窗口还没布局时不能除零
+    let a5 = MotionCurve.anchor(for: .zero, toward: CGPoint(x: 100, y: 100))
+    check(a5.x == 0.5 && a5.y == 0.5, "面板尺寸为 0 时应退回中心")
+
+    // 锚点永远在合法区间
+    for (tx, ty) in [(0.0, 0.0), (788.0, 84.0), (1388.0, 744.0), (-9999.0, 9999.0)] {
+        let a = MotionCurve.anchor(for: panel, toward: CGPoint(x: tx, y: ty))
+        check(a.x >= 0.0 && a.x <= 1.0 && a.y >= 0.0 && a.y <= 1.0,
+              "锚点 (\(tx),\(ty)) 应在 0…1 内")
+    }
 }
 
 @MainActor

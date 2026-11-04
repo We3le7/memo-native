@@ -427,13 +427,9 @@ final class PanelController {
     /// 夹到 0.08…0.92 是为了不让锚点贴死在边角上——
     /// 那样旋转/缩放的形变会从一条边切进去，看着像被撕开。
     private func unfoldAnchorPoint(panel: NSWindow, orbFrame: NSRect) -> CGPoint {
-        let f = panel.frame
-        guard f.width > 0, f.height > 0 else { return CGPoint(x: 0.5, y: 0.5) }
-        let ax = (orbFrame.midX - f.minX) / f.width
-        let ay = (orbFrame.midY - f.minY) / f.height
-        return CGPoint(
-            x: min(0.92, max(0.08, ax)),
-            y: min(0.92, max(0.08, ay))
+        MotionCurve.anchor(
+            for: panel.frame,
+            toward: CGPoint(x: orbFrame.midX, y: orbFrame.midY)
         )
     }
 
@@ -488,6 +484,7 @@ final class PanelController {
         // 动画结束后把模型值钉到终态，避免 isRemovedOnCompletion 造成的回弹
         layer.transform = CATransform3DIdentity
         layer.opacity = 1
+
 
 
 

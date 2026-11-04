@@ -51,3 +51,21 @@ enum MotionCurve {
         (0..<count).map { NSNumber(value: Double($0) / Double(max(1, count - 1))) }
     }
 }
+
+// MARK: - 展开锚点
+
+extension MotionCurve {
+    /// 面板该从哪一点长出来：目标物件中心在面板坐标系里的位置。
+    ///
+    /// 返回归一化坐标（0…1），可直接当 CALayer 的 anchorPoint。
+    /// 夹到 0.08…0.92 是为了不让锚点贴死在边角：
+    /// 那样缩放会从一条边切进去，看着像被撕开而不是长出来。
+    static func anchor(for panelFrame: CGRect, toward target: CGPoint) -> CGPoint {
+        guard panelFrame.width > 0, panelFrame.height > 0 else {
+            return CGPoint(x: 0.5, y: 0.5)
+        }
+        let ax = (target.x - panelFrame.minX) / panelFrame.width
+        let ay = (target.y - panelFrame.minY) / panelFrame.height
+        return CGPoint(x: min(0.92, max(0.08, ax)), y: min(0.92, max(0.08, ay)))
+    }
+}
