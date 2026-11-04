@@ -91,6 +91,11 @@ final class PanelController {
     /// 排队的 orderOut 仍会照常触发，把刚展开的窗口藏掉——
     /// 表现就是"展开时一闪一闪"。
     private var foldGeneration = 0
+    /// 展开动画是否在播。
+    ///
+    /// 用它而不是看时间戳：时间戳只能近似"刚展开"，而这个标记
+    /// 精确覆盖"从 show() 开始到动画结束"整段，包括动画被拖慢的情况。
+    private var isRevealing = false
     private var shownAt: Date = .distantPast
     /// 刚显示后的保护期：系统在启动/切 App 瞬间会连发失焦通知，
     /// 这段时间内的失焦不算“用户主动点了别处”。
@@ -188,11 +193,13 @@ final class PanelController {
 
         panel.makeKeyAndOrderFront(nil)
 
+        isRevealing = true
         DispatchQueue.main.async {
             FrameProbe.shared.start("展开")
             self.playUnfold()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 FrameProbe.shared.stop()
+                self.isRevealing = false
             }
         }
         // 激活是异步的：下一轮 runloop 再确认一次 key，避免"启动即收起"
@@ -297,6 +304,20 @@ final class PanelController {
     /// 让其他窗口自然盖住它，而不是永远悬在最上面。
     private func applyLevel(active: Bool) {
         guard let panel else { return }
+
+        // 不必要就不要动层级。
+        //
+        // 层级的每次升降都会让窗口重新合成一次（被前景 App 盖住/露出），
+        // 配合动画就是"一闪一闪"。原来的写法是"算出目标值 → 只要不同就赋值"，
+        // 但启动/切换 App 期间系统会连发多次 active/resign，
+        // 目标值在 floating 和 normal 之间来回跳。
+        //
+        // 这里加两道闸：
+        //   1. 展开动画期间（刚 show 的 0.4s 内）绝不降级
+        //   2. 值没变就直接返回，不产生无意义的赋值
+        guard UILogic.canChangeWindowLevel(active: active, isRevealing: isRevealing) else {
+            return
+        }
         switch behavior {
         case .pin:
             if panel.level.rawValue != NSWindow.Level.floating.rawValue {
@@ -318,6 +339,7 @@ final class PanelController {
             return
         }
         isHiding = true
+        isRevealing = false
         foldGeneration &+= 1
 
         // 收回动效：内容缩回球的方向，同时淡出，播完再真正隐藏窗口。
@@ -350,7 +372,12 @@ final class PanelController {
             FloatingOrb.shared.endAbsorb(duration: foldDuration)
         }
 
-        applyLevel(active: false)
+        // 注意：这里不降窗口层级。
+        //
+        // applyLevel(active: false) 会把面板从 .floating 降到 .normal，
+        // 于是它立刻被前台 App 的窗口盖住——用户看到的就是"页面突然消失"，
+        // 后面 0.45 秒的收缩动画全被遮在下面，等于白做。
+        // 降级挪到动画播完之后（见下方 orderOut 处）。
         removeEscapeMonitor()
 
 
@@ -366,6 +393,8 @@ final class PanelController {
             guard self.foldGeneration == generation else {
                 return
             }
+            // 动画已播完，这时才把层级降下去
+            self.applyLevel(active: false)
             target.orderOut(nil)
             self.resetLayer(afterFold: true)
             self.isHiding = false

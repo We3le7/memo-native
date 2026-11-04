@@ -222,3 +222,22 @@ extension UILogic {
         return vs.last ?? 0
     }
 }
+
+extension UILogic {
+    /// 折叠动画期间，窗口层级能不能降。
+    ///
+    /// **不能**。降级会让面板立刻被前台 App 的窗口盖住——用户看到的是
+    /// "页面突然消失"，后面那 0.45 秒的收缩动画全被遮在下面，等于白做。
+    ///
+    /// 降级必须等动画播完、窗口即将 orderOut 的那一刻再做。
+    ///
+    /// - Parameters:
+    ///   - active: 目标状态（true = 浮到最上层）
+    ///   - isRevealing: 展开动画是否在播
+    static func canChangeWindowLevel(active: Bool, isRevealing: Bool) -> Bool {
+        // 要升到最上层：任何时候都可以
+        if active { return true }
+        // 要降级：展开动画期间不行
+        return !isRevealing
+    }
+}

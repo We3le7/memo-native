@@ -22,6 +22,7 @@ testSpan()
     testFoldIsInverseOfUnfold()
     testFoldSlowerButSameShape()
     testFoldFadeNotTooFast()
+    testWindowLevelDuringFold()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -589,6 +590,43 @@ func testFoldFadeNotTooFast() {
     check(abs(kt.first! - 0.0) < 0.0001, "关键帧应从 0 起")
     check(abs(kt.last! - 1.0) < 0.0001, "关键帧应到 1 止")
     check(kt.count == UILogic.foldFadeValues.count, "关键帧与取值数量必须一致")
+}
+
+@MainActor
+
+
+/// 折叠动画期间不能降窗口层级。
+///
+/// 这是"页面突然消失"的根因：applyLevel(active: false) 把面板从
+/// .floating 降到 .normal，它立刻被前台 App 的窗口盖住，
+/// 后面 0.45 秒的收缩动画全被遮在下面——用户只看到"啪"地没了。
+///
+/// 降级必须等动画播完、窗口即将 orderOut 的那一刻。
+func testWindowLevelDuringFold() {
+    // 升到最上层：任何时候都行
+    check(UILogic.canChangeWindowLevel(active: true, isRevealing: true),
+          "展开途中升层级应允许")
+    check(UILogic.canChangeWindowLevel(active: true, isRevealing: false),
+          "静止时升层级应允许")
+
+    // 降级：展开动画期间绝对不行
+    check(!UILogic.canChangeWindowLevel(active: false, isRevealing: true),
+          "展开动画期间不该降层级")
+
+    // 降级：没在播动画时允许（折叠收尾、失焦下沉都要用）
+    check(UILogic.canChangeWindowLevel(active: false, isRevealing: false),
+          "没在播动画时应允许降层级")
+
+    // 穷举：只有"降级 + 正在展开"这一种组合被拒
+    var blocked = 0
+    for active in [true, false] {
+        for revealing in [true, false] {
+            if !UILogic.canChangeWindowLevel(active: active, isRevealing: revealing) {
+                blocked += 1
+            }
+        }
+    }
+    check(blocked == 1, "4 种组合里只有 1 种该被拒绝")
 }
 
 @MainActor
