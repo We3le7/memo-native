@@ -27,7 +27,7 @@ testSpan()
     testGraceCoversUnfold()
     testGraceResignDeferred()
     testPriorityDotHitArea()
-    testPriorityDotCornerRadius()
+    testPriorityDotIsCapsule()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -785,31 +785,28 @@ func testPriorityDotHitArea() {
 @MainActor
 
 
-/// 色点用圆角矩形而不是正圆。
+/// 色点是胶囊形：两端正半圆，中间一段平直。
 ///
-/// 四个小圆挤在一起容易看成小圆点；圆角方形更像一排并置的档位块，
-/// 扫视时更容易分辨"这是四个可选项"。
-///
-/// 圆角比例要卡在区间里：
-///   - 太小 → 看着是方块，硬
-///   - 太大 → 退化成圆，白改
-func testPriorityDotCornerRadius() {
-    let r = UILogic.dotCornerRadius
-    let size = UILogic.dotVisualSize
-    let ratio = r / size
+/// 正圆看着是"一个点"，圆角方块偏硬，胶囊是两者之间最像
+/// "档位块"的形状——四个并排时像一排小开关。
+func testPriorityDotIsCapsule() {
+    let w = UILogic.dotVisualWidth
+    let h = UILogic.dotVisualSize
 
-    check(r > 0, "圆角必须大于 0，否则就是直角方块")
+    // 胶囊的长边必须大于短边，否则就是正圆
+    check(w > h, "宽度(\(w))必须大于高度(\(h))，否则退化成正圆")
 
-    // 圆角半径不能达到边长的一半——那正是正圆的定义
-    check(r < size / 2, "圆角达到一半边长就退化成正圆了")
+    // 中间必须有可辨识的平直段，不能只是"略微椭圆"
+    check(UILogic.dotFlatSegment >= 2,
+          "平直段(\(UILogic.dotFlatSegment)pt)太短，看不出胶囊形")
 
-    // 比例区间：20%~40% 是"明显圆角但仍看得出矩形"的范围
-    check(ratio >= 0.20, "圆角比例 \(Int(ratio*100))% 太小，接近方块")
-    check(ratio <= 0.40, "圆角比例 \(Int(ratio*100))% 太大，接近正圆")
+    // 但也不能太长，否则像条状图而不是档位块
+    check(UILogic.dotFlatSegment <= 6,
+          "平直段(\(UILogic.dotFlatSegment)pt)太长，会像条状图")
 
-    // 8pt 尺寸下 r=2.5 对应 31%，填充率约 91.5%（正圆 78.9%）
-    // 两者差 12 个百分点以上，肉眼能分辨
-    check(ratio > 0.25 && ratio < 0.35, "期望比例落在 25%~35% 之间")
+    // 宽度超过命中帧就等于命中区受限了
+    check(w <= UILogic.dotHitFrame,
+          "胶囊宽度不能超过命中帧，否则点不全")
 }
 
 @MainActor

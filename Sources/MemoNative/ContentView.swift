@@ -1122,26 +1122,22 @@ struct MemoRow: View {
                                 Button {
                                     onSetPriority(level)
                                 } label: {
-                                    // 圆角矩形（连续圆角），不是正圆。
-                                    // 四个小圆挤在一起容易看成小圆点，
-                                    // 圆角方形更像一排并置的档位块，扫视时
-                                    // 更容易分辨"这是四个可选项"。
-                                    RoundedRectangle(
-                                        cornerRadius: UILogic.dotCornerRadius,
-                                        style: .continuous
-                                    )
+                                    // 胶囊：两端正半圆，中间一段平直。
+                                    //
+                                    // 正圆看着是"一个点"，圆角方块偏硬，
+                                    // 胶囊是这两者之间最像"档位块"的形状——
+                                    // 四个并排时像一排小开关，扫视时很容易
+                                    // 认出这是四个可选项。
+                                    Capsule(style: .continuous)
                                     .fill(level == item.priority
                                           ? level.tint
                                           : level.tint.opacity(0.22))
                                     .frame(
-                                        width: UILogic.dotVisualSize,
+                                        width: UILogic.dotVisualWidth,
                                         height: UILogic.dotVisualSize
                                     )
                                     .overlay(
-                                        RoundedRectangle(
-                                            cornerRadius: UILogic.dotCornerRadius,
-                                            style: .continuous
-                                        )
+                                        Capsule(style: .continuous)
                                         .strokeBorder(
                                             level.tint.opacity(level == item.priority ? 0 : 0.5),
                                             lineWidth: 0.7

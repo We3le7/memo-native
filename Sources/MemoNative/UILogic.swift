@@ -312,15 +312,18 @@ extension UILogic {
 // MARK: - 优先级色点（悬停时展开的那四个）
 
 extension UILogic {
-    /// 色点视觉直径
+    /// 色点高度（胶囊的短边）
     static let dotVisualSize: Double = 8
-    /// 色点圆角半径。
-    ///
-    /// 用圆角矩形而不是正圆：四个小圆挤在一起容易看成小圆点，
-    /// 圆角方形更像一排并置的档位块，扫视时更容易分辨"这是四个可选项"。
-    /// 2.5 / 8 ≈ 31% 圆角，是"明显是圆角、但仍看得出是矩形"的比例。
-    static let dotCornerRadius: Double = 2.5
 
+    /// 色点宽度（胶囊的长边）。
+    ///
+    /// 两端是半圆（半径 = 半高 = 4pt），中间留 4pt 平直段。
+    /// 宽度 8 就是正圆（平直段为 0）；12 让胶囊形态看得出来，
+    /// 又不至于长到像条状图。
+    static let dotVisualWidth: Double = 12
+
+    /// 中间平直段长度（两端半圆之外的直线部分）。
+    static var dotFlatSegment: Double { dotVisualWidth - dotVisualSize }
     /// 每格命中帧边长（方形，不可见）
     static let dotHitFrame: Double = 16
     /// 相邻命中帧之间的间距
