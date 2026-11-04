@@ -205,6 +205,14 @@ final class PanelController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
 
+        // 关闭窗口阴影。
+        //
+        // 系统阴影由窗口服务按**窗口矩形**绘制，不随内容图层的 transform 缩放。
+        // 展开/折叠时内容缩到 0.06，阴影还是完整的 600×660 轮廓留在原地，
+        // 看起来就是"底下还有一层页面"。
+        // 阴影改由 SwiftUI 在背景层自己画，这样它跟着一起缩放。
+        panel.hasShadow = false
+
         // 内容装进自建容器，缩放动效作用在容器图层上。
         // 直接动 frameView 的图层不行：AppKit 每次布局都会把它的
         // anchorPoint / position 重置回默认值，锚点 0.4 秒内就失效。
@@ -216,6 +224,15 @@ final class PanelController {
         container.addSubview(hosting)
         panel.contentView = container
         self.animContainer = container
+
+        // 钉死窗口尺寸。
+        // 内容层加了 shadow 之后，SwiftUI 的理想尺寸会带上阴影的扩散范围，
+        // 窗口被反推成 588×648 而不是 600×660。面板是固定尺寸浮窗，
+        // 尺寸由自己说了算。
+        panel.setContentSize(NSSize(width: 600, height: 660))
+        panel.minSize = NSSize(width: 600, height: 660)
+        panel.maxSize = NSSize(width: 600, height: 660)
+
 
         // 窗口本体裁圆角。
         //
@@ -500,6 +517,7 @@ final class PanelController {
         // 动画结束后把模型值钉到终态，避免 isRemovedOnCompletion 造成的回弹
         layer.transform = CATransform3DIdentity
         layer.opacity = 1
+
 
 
 

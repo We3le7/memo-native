@@ -205,6 +205,24 @@ frameView.layer?.masksToBounds = true
 
 淡出由 SwiftUI 的 `opacity` 负责，**窗口 alpha 恒为 1**。这里踩过坑：一开始用 `NSWindow.animator().alphaValue` 做窗口级淡出，结果球再也不回来——实测把 alpha 设回 1 之后 0.35 秒仍是 0，窗口级 alpha 动画被打断后会停在终值且不再响应赋值。
 
+### 阴影不能交给窗口
+
+动效期间会看到一个"底层页面"——面板缩小时，底下有个和原窗口一样大的暗色矩形留在原地。
+
+根因是 `NSWindow.hasShadow` 默认为 `true`。**系统阴影由窗口服务按窗口矩形绘制，不随内容图层的 transform 缩放**。面板缩到 0.06 时，内容只剩一个小点，阴影仍是完整的 600×660 轮廓。
+
+修法：
+
+```swift
+panel.hasShadow = false          // 关掉窗口阴影
+```
+
+阴影改由 SwiftUI 画在内容背景层上（`ZStack{...}.shadow(...)`），这样它跟着容器一起缩放、一起淡出。
+
+悬浮球那边早就设了 `hasShadow = false`（阴影由 SwiftUI 画），面板漏了。两边现在一致。
+
+**一个测量陷阱**：`CGWindowListCopyWindowInfo` 报告的窗口尺寸比 AppKit 的 `frame` 小约 2%（600×660 报成 588×648），因为它把阴影排除在外。这次也差点误判成"窗口尺寸不对"，用 `panel.frame` 核实后是 600×660，正常。
+
 ### 折叠是展开的逆过程
 
 这条是硬约束：**折叠必须严格是展开的倒放**，同一条曲线、同样帧数、同样的淡出关键帧，只是把采样值倒过来用。
