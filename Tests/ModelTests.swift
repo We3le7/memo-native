@@ -29,6 +29,8 @@ testSpan()
     testPriorityDotHitArea()
     testPriorityDotIsCapsule()
     testNewMemoDefaultsToToday()
+    testSpanSliderMath()
+    testSpanWheelStep()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -834,6 +836,96 @@ func testNewMemoDefaultsToToday() {
     let tomorrow = UILogic.dueKey(offsetDays: 1)
     check(tomorrow != key, "明天不该等于今天")
     check(tomorrow > key, "yyyy-MM-dd 字典序应与时间序一致")
+}
+
+@MainActor
+
+
+/// 工期滑块的坐标换算。
+///
+/// 拖动时要满足三条：落在整数天、不越界、两端能到达。
+/// 边界最容易错——鼠标拖到最右时 x 可能等于 width，
+/// 算出来正好是 upperBound；但如果拖到 width 之外就溢出了。
+func testSpanSliderMath() {
+    let lo = UILogic.spanRange.lowerBound
+    let hi = UILogic.spanRange.upperBound
+    let w = 100.0
+
+    // 端点
+    check(UILogic.spanFromSliderX(0, width: w) == lo, "最左应是下限")
+    check(UILogic.spanFromSliderX(w, width: w) == hi, "最右应是上限")
+
+    // 越界钳制：拖出轨道范围也不能跑飞
+    check(UILogic.spanFromSliderX(-50, width: w) == lo, "左越界应钳到下限")
+    check(UILogic.spanFromSliderX(200, width: w) == hi, "右越界应钳到上限")
+
+    // 中点：落在区间中央
+    let mid = UILogic.spanFromSliderX(w / 2, width: w)
+    check(mid > lo && mid < hi, "中点应落在区间内部")
+
+    // 单调性：x 增大，结果不减
+    var prev = lo
+    for i in 0...100 {
+        let v = UILogic.spanFromSliderX(Double(i) / 100.0 * w, width: w)
+        check(v >= prev, "滑块值应随 x 单调不减")
+        prev = v
+    }
+
+    // 宽度为 0 不能崩（布局首帧会这样）
+    check(UILogic.spanFromSliderX(50, width: 0) == lo, "宽度为 0 时应返回下限")
+
+    // 往返一致：进度 → 天数 → 进度
+    for v in [lo, (lo + hi) / 2, hi] {
+        let p = UILogic.sliderProgress(for: v)
+        check(p >= 0 && p <= 1, "进度应在 0...1 之间")
+        let back = UILogic.spanFromSliderX(p * w, width: w)
+        check(abs(back - v) <= 1, "往返换算误差不应超过 1 天")
+    }
+}
+
+/// 滚轮的一格步进判定。
+///
+/// 关键：拖过半个格子才算一格，轻甩也算。
+/// 之前写错过一次——在 onChanged 里反复提交，
+/// 手指继续移动就继续触发，拖一小段能连跳好几格。
+func testSpanWheelStep() {
+    let h = 18.0
+
+    // 没动
+    check(UILogic.wheelDelta(translation: 0, predicted: 0, rowHeight: h) == 0,
+          "没位移不该换行")
+
+    // 小位移（不到半格）不算
+    check(UILogic.wheelDelta(translation: h * 0.3, predicted: h * 0.3, rowHeight: h) == 0,
+          "不到半格不该换行")
+
+    // 向上拖过半格 → 值 +1
+    check(UILogic.wheelDelta(translation: -h * 0.6, predicted: -h * 0.6, rowHeight: h) == 1,
+          "向上过半格应 +1")
+
+    // 向下拖过半格 → 值 -1
+    check(UILogic.wheelDelta(translation: h * 0.6, predicted: h * 0.6, rowHeight: h) == -1,
+          "向下过半格应 -1")
+
+    // 轻甩：实际位移小，但预测位移大
+    check(UILogic.wheelDelta(translation: -h * 0.2, predicted: -h * 1.2, rowHeight: h) == 1,
+          "向上轻甩也应 +1")
+    check(UILogic.wheelDelta(translation: h * 0.2, predicted: h * 1.2, rowHeight: h) == -1,
+          "向下轻甩也应 -1")
+
+    // 一次手势最多一格（不能返回 ±2）
+    for t in [-100.0, -50, 0, 50, 100] {
+        let d = UILogic.wheelDelta(translation: t, predicted: t * 3, rowHeight: h)
+        check(abs(d) <= 1, "单次手势最多走一格")
+    }
+
+    // 行高为 0 不能除零
+    check(UILogic.wheelDelta(translation: -10, predicted: -10, rowHeight: 0) == 0,
+          "行高为 0 时应返回 0")
+
+    // 文案
+    check(UILogic.spanLabel(1) == "当天", "1 天应显示为「当天」")
+    check(UILogic.spanLabel(2) == "2 天", "多天应显示数字")
 }
 
 @MainActor

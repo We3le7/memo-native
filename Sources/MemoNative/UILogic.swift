@@ -355,3 +355,55 @@ extension UILogic {
         dotHitFrame >= 14
     }
 }
+
+// MARK: - 工期滑块与滚轮
+
+extension UILogic {
+    /// 工期可选范围
+    static let spanRange: ClosedRange<Int> = 1...30
+
+    /// 滑块位置（pt）→ 工期天数。
+    ///
+    /// 拖动时必须落在整数天，且不能越界。
+    static func spanFromSliderX(_ x: Double, width: Double) -> Int {
+        guard width > 0 else { return spanRange.lowerBound }
+        let ratio = min(1, max(0, x / width))
+        let total = Double(spanRange.upperBound - spanRange.lowerBound)
+        let raw = Double(spanRange.lowerBound) + ratio * total
+        return min(spanRange.upperBound,
+                   max(spanRange.lowerBound, Int(raw.rounded())))
+    }
+
+    /// 工期天数 → 滑块进度（0...1）。
+    static func sliderProgress(for span: Int) -> Double {
+        let total = Double(spanRange.upperBound - spanRange.lowerBound)
+        guard total > 0 else { return 0 }
+        let clamped = min(spanRange.upperBound, max(spanRange.lowerBound, span))
+        return Double(clamped - spanRange.lowerBound) / total
+    }
+
+    /// 滚轮拖动位移 → 应前进几格。
+    ///
+    /// 半个格子为阈值，支持轻甩
+    ///
+    /// - Parameters:
+    ///   - translation: 手势累计位移（负值为向上）
+    ///   - predicted:  预测的最终位移（用于惯性）
+    ///   - rowHeight:  每行高度
+    static func wheelDelta(
+        translation: Double,
+        predicted: Double,
+        rowHeight: Double
+    ) -> Int {
+        guard rowHeight > 0 else { return 0 }
+        let threshold = rowHeight / 2
+        if translation < -threshold || predicted < -threshold * 2 { return 1 }
+        if translation > threshold || predicted > threshold * 2 { return -1 }
+        return 0
+    }
+
+    /// 工期文案。1 天说"当天"更自然。
+    static func spanLabel(_ span: Int) -> String {
+        span <= 1 ? "当天" : "\(span) 天"
+    }
+}
