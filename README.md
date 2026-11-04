@@ -273,6 +273,26 @@ FloatingOrb.shared.syncVisibilityToPanel(panelVisible: panel.isVisible)
 
 **一个测量陷阱**：`CGWindowListCopyWindowInfo` 报告的窗口尺寸比 AppKit 的 `frame` 小约 2%（600×660 报成 588×648），因为它把阴影排除在外。这次也差点误判成"窗口尺寸不对"，用 `panel.frame` 核实后是 600×660，正常。
 
+### show() 必须幂等
+
+`show()` 有 9 个调用点（启动、⌥Space、深链、菜单栏、Dock 点击…），短时间内被调用两次很常见。
+
+原来每次都无条件跑完整套：重新定锚点 → 重设图层 → 重播 `playUnfold`。动画从中间被拽回起点再来一遍，看起来就是**一闪一闪**。
+
+现在面板已可见且不在收起时，只把它提到前面、把焦点还给输入框，不重播动画。
+
+### 折叠途中的 orderOut 会杀掉展开
+
+折叠动画要播一段时间，`orderOut` 排在它后面。如果用户在这段时间里又展开，那个排队的 `orderOut` 仍会照常触发，把刚展开的窗口藏掉——随后又被重新显示，又是一个"闪"。
+
+修法是给每次折叠打一个代次号：
+
+```swift
+private var foldGeneration = 0
+```
+
+`hide()` 自增并记下当时的值，延迟收尾时先比对，代次变了就放弃。`show()` 也自增一次，作废所有在途的折叠收尾。
+
 ### 折叠是展开的逆过程
 
 这条是硬约束：**折叠必须严格是展开的倒放**，同一条曲线、同样帧数、同样的淡出关键帧，只是把采样值倒过来用。
@@ -285,7 +305,9 @@ FloatingOrb.shared.syncVisibilityToPanel(panelVisible: panel.isVisible)
 | 帧数 | 34 | 30 |
 | 阻尼 | 0.74 | 0.92 |
 
-展开带过冲、收起近似线性，同一个动作正反播出来手感对不上。现在两者共用 `unfoldDuration` / `unfoldFrames` / `unfoldDamping` 一组常量，折叠直接 `.reversed()`。
+展开带过冲、收起近似线性，同一个动作正反播出来手感对不上。现在两者共用 `unfoldFrames` / `unfoldDamping`，折叠直接 `.reversed()`。
+
+时长是分开的：展开 0.34s，折叠 0.52s。展开是"叫出来"，快一点显利落；收起是"收回去"，慢一点让眼睛跟得上面板往球那边缩的过程。**形状完全一致，只是时间轴拉长。**
 
 实测对照（面板 scale）：
 

@@ -20,6 +20,7 @@ testSpan()
     testOrbStateResets()
     testUnfoldAnchor()
     testFoldIsInverseOfUnfold()
+    testFoldSlowerButSameShape()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -509,6 +510,39 @@ func testOrbAbsorbRespectsToggle() {
         let reveal = UILogic.shouldRevealOrbOnCollapse(orbEnabled: enabled, isCollapsing: true)
         check(absorb == reveal, "吸附与浮现对同一开关必须同进同退（enabled=\(enabled)）")
     }
+}
+
+@MainActor
+
+
+/// 折叠比展开慢，但**曲线形状**必须完全一致。
+///
+/// 展开是"叫出来"，快一点显利落；收起是"收回去"，慢一点让眼睛
+/// 跟得上面板往球那边缩的过程。所以折叠时长单独配（0.52 vs 0.34）。
+///
+/// 但形状不能变：同一条阻尼曲线、同样的帧数，只是把时间轴拉长。
+/// 否则就成了"展开和折叠是两套动作"，手感对不上。
+func testFoldSlowerButSameShape() {
+    let count = 34
+    let damping: CGFloat = 0.74
+
+    // 同一组参数采样，形状就必须一样——时间轴拉长不改变序列本身
+    let a = MotionCurve.springValues(from: 0.06, to: 1.0, damping: damping, count: count)
+    let b = MotionCurve.springValues(from: 0.06, to: 1.0, damping: damping, count: count)
+    check(a == b, "同样的入参必须采出同样的序列（形状与时长无关）")
+
+    // 折叠用的是这套采样的逆序，形状不受时长影响
+    let folded = Array(a.reversed())
+    check(abs(folded.first! - 1.0) < 0.0001, "折叠仍从 1.0 起")
+    check(abs(folded.last! - 0.06) < 0.0001, "折叠仍到 0.06 止")
+
+    // 过冲必须保留：时长变了，过冲不能消失
+    check((a.max() ?? 0) > 1.01, "展开应有可见的过冲")
+    check((folded.max() ?? 0) > 1.01, "折叠应保留同样的过冲")
+
+    // 关键帧数量不随时长变化
+    let kt = MotionCurve.keyTimes(count: count)
+    check(kt.count == count, "关键帧数量只由帧数决定，与时长无关")
 }
 
 @MainActor

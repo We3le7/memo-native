@@ -248,6 +248,7 @@ final class FloatingOrb {
 
 
 
+
     func configure(store: MemoStore, settings: AppSettings) {
         self.store = store
         self.settings = settings

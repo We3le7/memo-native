@@ -85,6 +85,12 @@ final class PanelController {
     private var observers: [NSObjectProtocol] = []
     private var previousApp: NSRunningApplication?
     private var isHiding = false
+    /// 折叠代次。每次 hide() 自增；延迟执行的 orderOut 只在代次没变时才生效。
+    ///
+    /// 不加这个会出竞态：折叠动画 0.52s，用户在这段时间里又展开，
+    /// 排队的 orderOut 仍会照常触发，把刚展开的窗口藏掉——
+    /// 表现就是"展开时一闪一闪"。
+    private var foldGeneration = 0
     private var shownAt: Date = .distantPast
     /// 刚显示后的保护期：系统在启动/切 App 瞬间会连发失焦通知，
     /// 这段时间内的失焦不算“用户主动点了别处”。
@@ -130,6 +136,23 @@ final class PanelController {
             buildPanel(store: store, settings: settings)
         }
         guard let panel else { return }
+
+        // 作废在途的折叠收尾：如果上一轮 hide() 还有排队的 orderOut，
+        // 它会在展开过程中把窗口藏掉。
+        foldGeneration &+= 1
+
+        // 已经展开着就只把它提到前面，不要重播展开动画。
+        //
+        // show() 有 9 个调用点（启动、⌥Space、深链、菜单栏、Dock 点击…），
+        // 短时间内被调用两次很常见。原来每次都无条件跑完整套：
+        // 重新定锚点 → 重设图层 → 重播 playUnfold，
+        // 动画从中间被拽回起点再来一遍，看起来就是"一闪一闪"。
+        if panel.isVisible, !isHiding {
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKeyAndOrderFront(nil)
+            NotificationCenter.default.post(name: .memoFocusInput, object: nil)
+            return
+        }
 
         // 记住当前前台 App，收起时好把焦点还回去
         if let front = NSWorkspace.shared.frontmostApplication,
@@ -291,14 +314,17 @@ final class PanelController {
 
     /// - Parameter restoreFocus: 是否把焦点交还给唤出前的 App（用户主动收起时用）
     func hide(restoreFocus: Bool = true) {
-        guard let panel, !isHiding else { return }
+        guard let panel, !isHiding else {
+            return
+        }
         isHiding = true
+        foldGeneration &+= 1
 
         // 收回动效：内容缩回球的方向，同时淡出，播完再真正隐藏窗口。
         // 顺序很重要——先 orderOut 就看不到动画了；
         // 但也不能无限等，用固定时长兜底，避免动画被系统打断后窗口卡在屏幕上。
         // 缩回球的位置：Core Animation 驱动，与展开对称。
-        let foldDuration = Self.slowFactor * PanelController.unfoldDuration
+        let foldDuration = Self.slowFactor * PanelController.foldDuration
 
         FrameProbe.shared.start("折叠")
         playFold()
@@ -328,11 +354,17 @@ final class PanelController {
         removeEscapeMonitor()
 
 
+
         // 动画播完再真正撤窗口。
         // 多留 0.04s 余量：动画稍慢或系统繁忙时，"啪"地消失会很扎眼。
         let target = panel
+        let generation = foldGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + foldDuration + 0.04) { [weak self] in
             guard let self else { return }
+            // 这段时间里又被展开过了：这次收尾已经过期，不能撤窗口
+            guard self.foldGeneration == generation else {
+                return
+            }
             target.orderOut(nil)
             self.resetLayer(afterFold: true)
             self.isHiding = false
@@ -512,6 +544,13 @@ final class PanelController {
     /// 折叠是展开的逆过程，两边必须用同一份常量——
     /// 之前各写一套，改了一边忘了另一边，正反播出来手感对不上。
     private static let unfoldDuration: CFTimeInterval = 0.34
+    /// 折叠比展开略慢。
+    ///
+    /// 展开是"叫出来"，快一点显得利落；收起是"收回去"，
+    /// 慢一点让眼睛跟得上面板往球那边缩的过程。
+    /// 两者的**曲线形状**仍然完全一致（同一组阻尼/帧数/关键帧），
+    /// 只是时间轴拉长——逆过程的观感不变，只是放慢。
+    private static let foldDuration: CFTimeInterval = 0.52
     private static let unfoldStartScale: CGFloat = 0.06
     private static let unfoldFrames = 34
     private static let unfoldDamping: CGFloat = 0.74
@@ -624,7 +663,7 @@ final class PanelController {
         // 之前折叠是自己一套参数（0.24s / 30 帧 / 阻尼 0.92），和展开
         // （0.34s / 34 帧 / 阻尼 0.74）完全不对称——展开带过冲、收起近似线性，
         // 同一个动作正反播出来手感对不上。
-        let duration: CFTimeInterval = Self.slowFactor * PanelController.unfoldDuration
+        let duration: CFTimeInterval = Self.slowFactor * PanelController.foldDuration
         let frames = PanelController.unfoldFrames
         let startScale = PanelController.unfoldStartScale
 
