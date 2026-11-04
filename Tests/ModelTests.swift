@@ -22,6 +22,7 @@ testSpan()
     testFoldIsInverseOfUnfold()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
+    testOrbAbsorbRespectsToggle()
     testPriorityBreakdown()
 
 // 1. 排序：日期 → 完成态 → 优先级
@@ -475,6 +476,28 @@ func testOrbRevealRespectsToggle() {
         }
     }
     check(revealed == 1, "4 种组合里只有 1 种该浮现")
+}
+
+@MainActor
+
+
+/// 球关掉时不要对它播吸附动画。
+///
+/// 窗口已经 orderOut，这时改 collapse / ignoresMouseEvents 只会污染状态：
+/// 下次开启时球可能带着旧的 collapse 值出现——缩成一团或者干脆透明。
+func testOrbAbsorbRespectsToggle() {
+    // 球开着：该播吸附动画
+    check(UILogic.shouldAbsorbOrb(orbEnabled: true), "球开启时应收起")
+
+    // 球关着：不碰它
+    check(!UILogic.shouldAbsorbOrb(orbEnabled: false), "球关闭时不该做吸附动画")
+
+    // 和 reveal 的判断必须互斥：不能出现"收回去了但不放出来"的组合
+    for enabled in [true, false] {
+        let absorb = UILogic.shouldAbsorbOrb(orbEnabled: enabled)
+        let reveal = UILogic.shouldRevealOrbOnCollapse(orbEnabled: enabled, isCollapsing: true)
+        check(absorb == reveal, "吸附与浮现对同一开关必须同进同退（enabled=\(enabled)）")
+    }
 }
 
 @MainActor

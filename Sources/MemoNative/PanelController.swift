@@ -146,7 +146,12 @@ final class PanelController {
         // 球"被吸进面板"：鼓起再收缩淡出，与面板展开同时起势。
         // 不能用瞬时的 setExpanded(true)——那样球一闪就没，
         // 面板凭空出现，两者之间没有视觉接力。
-        FloatingOrb.shared.beginAbsorb(duration: 0.24)
+        // 球被关掉时不要对它做吸附动画：窗口已经 orderOut，
+        // 这时改 collapse/ignoresMouseEvents 只会污染状态，
+        // 下次开启时球可能带着旧的 collapse 值出现。
+        if UILogic.shouldAbsorbOrb(orbEnabled: FloatingOrb.shared.isEnabled) {
+            FloatingOrb.shared.beginAbsorb(duration: 0.24)
+        }
         // 激活必须在 makeKey 之前完成，否则窗口拿到 key 的瞬间 App 还是非激活，
         // 系统会立刻补发一次 resignActive，把刚打开的面板又收起来。
         NSApp.activate(ignoringOtherApps: true)

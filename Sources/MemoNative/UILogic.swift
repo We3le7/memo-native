@@ -175,3 +175,15 @@ extension UILogic {
         return isCollapsing
     }
 }
+
+extension UILogic {
+    /// 面板展开时，要不要对球播"被吸入"的动画。
+    ///
+    /// 球关掉后窗口已经 orderOut，这时再去改 collapse / ignoresMouseEvents
+    /// 只会污染状态——下次开启时球可能带着旧的 collapse 值出现（缩成一团）。
+    ///
+    /// - Parameter orbEnabled: 设置里是否开启悬浮球
+    static func shouldAbsorbOrb(orbEnabled: Bool) -> Bool {
+        orbEnabled
+    }
+}
