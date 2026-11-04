@@ -38,12 +38,13 @@ struct OrbView: View {
     private var isAlerting: Bool { overdue > 0 && !isYielding }
 
     /// 悬停时轻微放大，按下时由外层缩回——形成"被按下去"的手感
+    /// 悬停时轻微放大。
+    ///
+    /// 吸入/长出时的形变不在这里做——交给 Core Animation（见 addAbsorbAnimation）。
+    /// 如果这里也按 collapse 缩放，会和 CA 的 transform 叠乘，
+    /// 变成 0.45 × 0.45 = 0.2，球看起来"缩两遍"。
     private var scale: CGFloat {
-        // 吸入过程走 OrbMotion 的曲线：先鼓一下再收，像被吸进面板。
-        if collapse > 0 {
-            return OrbMotion.scale(for: collapse)
-        }
-        return hovering ? 1.04 : 1.0
+        hovering ? 1.04 : 1.0
     }
 
     var body: some View {
@@ -148,9 +149,6 @@ struct OrbView: View {
                 .mask(Circle().strokeBorder(lineWidth: 2.5))
         )
         .scaleEffect(scale)
-        // 吸入时同步淡出：光靠缩小不够，球在缩到一半时边缘会显得"硬"，
-        // 叠一层透明度让消失更柔和。
-        .opacity(OrbMotion.opacity(for: collapse))
         // 双层阴影：近处紧实的接触阴影 + 远处柔和的投影
         .shadow(color: .black.opacity(hovering ? 0.16 : 0.10), radius: 2, y: 1)
         .shadow(
@@ -161,9 +159,6 @@ struct OrbView: View {
         .animation(.spring(response: 0.30, dampingFraction: 0.70), value: hovering)
         .animation(.spring(response: 0.38, dampingFraction: 0.80), value: badge)
         // 吸入用略低的阻尼：允许一点过冲，"鼓一下再收"的弹性才明显
-        // 吸入比面板的展开(0.40/0.74)略快、略弹，
-        // 视觉上像球被面板"吸"走，而不是两者各演各的。
-        .animation(.spring(response: 0.30, dampingFraction: 0.70), value: collapse)
     }
 
     // MARK: 内容
@@ -306,25 +301,24 @@ final class FloatingOrb {
     /// 这里要让球的动作与面板的展开同步，球不能提前消失，
     /// 否则用户看到的是"球没了，然后一个面板凭空出现"。
     func beginAbsorb(duration: Double = 0.24) {
-        guard let hover = hoverState, let panel else { return }
-
-        // 只驱动 SwiftUI 侧的 collapse，不碰窗口 alpha。
+        guard let panel else { return }
+        // 形变交给 Core Animation。
         //
-        // 之前用 animator() 把 alpha 动画到 0，结果收起后球再也回不来：
-        // 实测 endAbsorb 里把 alpha 设回 1，0.35 秒后仍是 0——
-        // 窗口级 alpha 动画被打断后会停在终值，而且不再响应后续赋值。
-        // 让 SwiftUI 用 scaleEffect + opacity 表达，窗口 alpha 恒为 1。
-        hover.collapse = 1
+        // 原来用 hover.collapse 驱动 SwiftUI 的 scaleEffect/opacity：
+        // 每帧重算视图树，帧率上不去，球"被吸走"的过程看着一顿一顿。
+        // CA 在渲染服务里插值，主线程只提交一次。
+        //
+        // 注意窗口 alpha 必须保持 1——之前用 animator() 动画 alpha，
+        // 被打断后会停在终值且不再响应赋值，球就再也回不来了。
+        hoverState?.collapse = 1
         panel.ignoresMouseEvents = true
-        _ = duration
+        addAbsorbAnimation(to: panel, absorbing: true, duration: duration)
     }
 
     /// 面板收起：球从面板方向"长回来"。
     func endAbsorb() {
-        guard let hover = hoverState, let panel else { return }
-        // 复位到常态。窗口 alpha 保持 1，形变全在 SwiftUI 侧，
-        // 这样不会出现"球被设成透明后再也回不来"的问题。
-        hover.collapse = 0
+        guard let panel else { return }
+        hoverState?.collapse = 0
         panel.alphaValue = 1
         if !panel.isVisible {
             panel.orderFront(nil)
@@ -334,7 +328,67 @@ final class FloatingOrb {
             panel.setFrame(NSRect(origin: panel.frame.origin, size: target), display: false)
         }
         panel.ignoresMouseEvents = false
+        addAbsorbAnimation(to: panel, absorbing: false, duration: 0.26)
         bind()
+    }
+
+    /// 球的吸入/长出动画。
+    ///
+    /// 先鼓一下（0.1 → 1.06）再收小（→ 0.45），
+    /// 曲线走 OrbMotion，和 SwiftUI 侧用的是同一套参数。
+    private func addAbsorbAnimation(to panel: NSPanel, absorbing: Bool, duration: Double) {
+        guard let layer = panel.contentView?.layer else { return }
+
+        // 锚点留在中心：球是圆的，从中心缩放最自然
+        layer.removeAnimation(forKey: "absorbScale")
+        layer.removeAnimation(forKey: "absorbFade")
+
+        let scaleAnim = CAKeyframeAnimation(keyPath: "transform.scale")
+        let steps = 28
+        var values: [NSNumber] = []
+        for i in 0..<steps {
+            let t = CGFloat(i) / CGFloat(steps - 1)
+            // 吸收和长出用同一组形变，只是方向相反：
+            // 这样"折叠再展开"前后一致，不会一个鼓起一个直接放大
+            let p = absorbing ? t : (1 - t)
+            values.append(NSNumber(value: Double(OrbMotion.scale(for: p))))
+        }
+        // 长出时终点必须是 1.0；吸收时终点停在 0.45，窗口随后被面板接管
+        values[steps - 1] = NSNumber(value: Double(absorbing ? OrbMotion.scale(for: 1) : 1.0))
+
+        scaleAnim.values = values
+        scaleAnim.keyTimes = MotionCurve.keyTimes(count: steps)
+        scaleAnim.duration = duration
+        scaleAnim.timingFunction = CAMediaTimingFunction(name: .linear)
+        scaleAnim.fillMode = .forwards
+        scaleAnim.isRemovedOnCompletion = false
+
+        let fadeAnim = CAKeyframeAnimation(keyPath: "opacity")
+        var fadeValues: [NSNumber] = []
+        for i in 0..<steps {
+            let t = CGFloat(i) / CGFloat(steps - 1)
+            let p = absorbing ? t : (1 - t)
+            fadeValues.append(NSNumber(value: OrbMotion.opacity(for: p)))
+        }
+        fadeValues[steps - 1] = NSNumber(value: Double(absorbing ? OrbMotion.opacity(for: 1) : 1.0))
+        fadeAnim.values = fadeValues
+        fadeAnim.keyTimes = MotionCurve.keyTimes(count: steps)
+        fadeAnim.duration = duration
+        fadeAnim.fillMode = .forwards
+        fadeAnim.isRemovedOnCompletion = false
+
+        layer.add(scaleAnim, forKey: "absorbScale")
+        layer.add(fadeAnim, forKey: "absorbFade")
+
+        // 模型值钉到终态，动画移走后不会跳变
+        if !absorbing {
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.02) {
+                layer.removeAnimation(forKey: "absorbScale")
+                layer.removeAnimation(forKey: "absorbFade")
+                layer.transform = CATransform3DIdentity
+                layer.opacity = 1
+            }
+        }
     }
 
     private func buildIfNeeded() {

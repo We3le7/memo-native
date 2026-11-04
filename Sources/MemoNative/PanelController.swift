@@ -75,6 +75,8 @@ final class PanelController {
     static let shared = PanelController()
 
     private var panel: MemoPanel?
+    /// 承载内容的容器，缩放动效作用在它的图层上
+    private var animContainer: AnimContainerView?
     /// 展开/收起的形变状态，跨窗口共享
     let unfold = UnfoldState()
     private var store: MemoStore?
@@ -149,35 +151,15 @@ final class PanelController {
         // 系统会立刻补发一次 resignActive，把刚打开的面板又收起来。
         NSApp.activate(ignoringOtherApps: true)
 
-        // 展开动效：从 0 起势。锚点要在窗口落位之后才知道，所以放在 position 之后。
-        if let orbFrame = FloatingOrb.shared.currentFrame, FloatingOrb.shared.isVisible {
-            unfold.anchor = unfoldAnchor(panel: panel, orbFrame: orbFrame)
-        } else {
-            unfold.anchor = .center
-        }
-        // 淡入只走 SwiftUI 的 opacity，不再动窗口 alphaValue。
-        // 两边同时驱动同一个视觉通道会打架：实测窗口 animator() 的动画
-        // 被打断后停在 0，面板就再也不可见了。
         panel.alphaValue = 1
-        unfold.progress = 0
 
         panel.makeKeyAndOrderFront(nil)
 
         DispatchQueue.main.async {
-            // 低阻尼换来过冲：面板会稍微"顶出去"再回位，
-            // 配合球的吸入动作，整体像一次有弹性的呼出。
-            withAnimation(.spring(response: 0.40, dampingFraction: 0.74)) {
-                self.unfold.progress = 1
-            }
-            // 兜底：spring 有时会在恢复了 key window / 触发重排之后
-            // 停在中间值（实测卡在 0.857），面板就永远是 588×648 而不是 600×660。
-            // 动画时长过后直接把终值钉死，保证最终状态是确定的。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
-                if self.unfold.progress != 1 {
-                    self.unfold.progress = 1
-                }
-                // 窗口尺寸兜底：scaleEffect 会让 NSHostingView 上报缩放后的尺寸，
-                // 窗口可能被系统改成 588×648。面板是固定尺寸浮窗，这里钉死回 600×660。
+            FrameProbe.shared.start("展开")
+            self.playUnfold()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                FrameProbe.shared.stop()
             }
         }
         // 激活是异步的：下一轮 runloop 再确认一次 key，避免"启动即收起"
@@ -222,7 +204,18 @@ final class PanelController {
         // 导致 .behindWindow 材质只能采到那块底色，玻璃效果等于没有。
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.contentView = hosting
+
+        // 内容装进自建容器，缩放动效作用在容器图层上。
+        // 直接动 frameView 的图层不行：AppKit 每次布局都会把它的
+        // anchorPoint / position 重置回默认值，锚点 0.4 秒内就失效。
+        let container = AnimContainerView(frame: NSRect(x: 0, y: 0, width: 600, height: 660))
+        container.wantsLayer = true
+        container.autoresizingMask = [.width, .height]
+        hosting.frame = container.bounds
+        hosting.autoresizingMask = [.width, .height]
+        container.addSubview(hosting)
+        panel.contentView = container
+        self.animContainer = container
 
         // 窗口本体裁圆角。
         //
@@ -277,17 +270,11 @@ final class PanelController {
         // 收回动效：内容缩回球的方向，同时淡出，播完再真正隐藏窗口。
         // 顺序很重要——先 orderOut 就看不到动画了；
         // 但也不能无限等，用固定时长兜底，避免动画被系统打断后窗口卡在屏幕上。
-        let orbFrame = FloatingOrb.shared.currentFrame
-        if let orbFrame, FloatingOrb.shared.isVisible {
-            unfold.anchor = unfoldAnchor(panel: panel, orbFrame: orbFrame)
-        }
-
-        // 同样只走 SwiftUI：progress 归 0 时内容缩回球的方向并淡到 0.15，
-        // 窗口 alpha 保持 1，避免两套动画互相打断。
-        // 收起也带一点过冲，但比展开快、比展开收敛（damping 更高），
-        // 否则关闭动作会显得拖沓。
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-            unfold.progress = 0
+        // 缩回球的位置：Core Animation 驱动，与展开对称。
+        FrameProbe.shared.start("折叠")
+        playFold()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            FrameProbe.shared.stop()
         }
 
         applyLevel(active: false)
@@ -296,13 +283,16 @@ final class PanelController {
         // 动画播完再真正撤窗口、把球叫回来。
         // 顺序必须是"面板先缩、球后现"，反过来会看到球和面板重叠一瞬。
         let target = panel
-        // 等面板收到足够小再让球长回来。
-        // 原来是 0.22，比 spring 的 response(0.28) 还早——球会抢在前面冒出来，
-        // 和还没缩完的面板叠一瞬。0.26 让两者交接在同一拍上。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) { [weak self] in
+        // 等折叠动画真正播完再撤窗口。
+        //
+        // 折叠动画 0.24s，原来这里只等 0.26s，余量 0.02s——太紧，
+        // 动画稍慢或系统繁忙就会看到面板"啪"地消失。
+        // 留到 0.30s，并且折叠结束后必须把图层复位，
+        // 否则下次展开会从缩小状态起手，第一帧就跳一下。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [weak self] in
             guard let self else { return }
             target.orderOut(nil)
-            self.unfold.progress = 1
+            self.resetLayer(afterFold: true)
             FloatingOrb.shared.endAbsorb()
             self.isHiding = false
         }
@@ -431,14 +421,140 @@ final class PanelController {
     /// 面板会贴在球的一侧，所以锚点几乎总在左或右边缘。
     /// 用 0.06/0.94 而不是 0/1：紧贴边缘时缩放会露出窗口直角，
     /// 稍微往里收一点，视觉上更干净。
-    private func unfoldAnchor(panel: NSWindow, orbFrame: NSRect) -> UnitPoint {
+    /// 面板该从哪一点长出来：悬浮球中心在面板坐标系里的位置。
+    ///
+    /// 返回归一化坐标（0…1），可以直接当 CALayer 的 anchorPoint 用。
+    /// 夹到 0.08…0.92 是为了不让锚点贴死在边角上——
+    /// 那样旋转/缩放的形变会从一条边切进去，看着像被撕开。
+    private func unfoldAnchorPoint(panel: NSWindow, orbFrame: NSRect) -> CGPoint {
         let f = panel.frame
-        guard f.width > 0, f.height > 0 else { return .center }
-        let dx = orbFrame.midX - f.midX
-        let dy = orbFrame.midY - f.midY
-        let ax = dx < -f.width * 0.2 ? 0.06 : (dx > f.width * 0.2 ? 0.94 : 0.5)
-        let ay = dy < -f.height * 0.2 ? 0.06 : (dy > f.height * 0.2 ? 0.94 : 0.5)
-        return UnitPoint(x: ax, y: ay)
+        guard f.width > 0, f.height > 0 else { return CGPoint(x: 0.5, y: 0.5) }
+        let ax = (orbFrame.midX - f.minX) / f.width
+        let ay = (orbFrame.midY - f.minY) / f.height
+        return CGPoint(
+            x: min(0.92, max(0.08, ax)),
+            y: min(0.92, max(0.08, ay))
+        )
+    }
+
+    /// 诊断用：把动效整体放慢，便于逐帧截图核对轨迹。
+    static let slowFactor: Double = {
+        guard let v = ProcessInfo.processInfo.environment["MEMO_SLOW"],
+              let d = Double(v), d > 0 else { return 1 }
+        return d
+    }()
+
+    // MARK: 展开 / 折叠（Core Animation）
+
+    /// 面板从悬浮球的位置长出来。
+    ///
+    /// 用 CAKeyframeAnimation 而不是 SwiftUI 的 withAnimation：
+    /// 后者每帧重算视图树，这一千多行内容加玻璃层根本跑不满帧率。
+    /// CA 的动画在渲染服务里插值，主线程只需提交一次。
+    private func playUnfold() {
+        guard let panel, let container = animContainer, let layer = container.layer else { return }
+
+        let orbFrame = FloatingOrb.shared.currentFrame
+        let anchor = orbFrame.map { unfoldAnchorPoint(panel: panel, orbFrame: $0) }
+            ?? CGPoint(x: 0.5, y: 0.5)
+        container.applyAnchor(anchor)
+
+        // 从小长到大 + 淡入。0.62 是能看清形变又不拖沓的下限；
+        // 再小就只剩"闪一下"，看不出是从球那里长出来的。
+        let startScale: CGFloat = 0.06
+        let duration: CFTimeInterval = Self.slowFactor * 0.34
+
+        let scaleAnim = CAKeyframeAnimation(keyPath: "transform.scale")
+        scaleAnim.values = MotionCurve.springValues(
+            from: startScale, to: 1.0, damping: 0.74, count: 34
+        ).map { NSNumber(value: Double($0)) }
+        scaleAnim.keyTimes = MotionCurve.keyTimes(count: 34)
+        scaleAnim.duration = duration
+        scaleAnim.timingFunction = CAMediaTimingFunction(name: .linear)
+        scaleAnim.fillMode = .forwards
+        scaleAnim.isRemovedOnCompletion = false
+
+        let fadeAnim = CAKeyframeAnimation(keyPath: "opacity")
+        // 前 40% 就淡到接近不透明，避免"大小在变但看不清内容"的糊感
+        fadeAnim.values = [0.0, 0.55, 0.88, 1.0, 1.0]
+        fadeAnim.keyTimes = [0, 0.22, 0.45, 0.62, 1.0]
+        fadeAnim.duration = duration
+        fadeAnim.fillMode = .forwards
+        fadeAnim.isRemovedOnCompletion = false
+
+        layer.add(scaleAnim, forKey: "unfoldScale")
+        layer.add(fadeAnim, forKey: "unfoldFade")
+
+        // 动画结束后把模型值钉到终态，避免 isRemovedOnCompletion 造成的回弹
+        layer.transform = CATransform3DIdentity
+        layer.opacity = 1
+
+
+
+        // 兜底：万一动画被打断，0.4 秒后强制归位
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.06) { [weak self] in
+            guard let self, let l = self.animContainer?.layer else { return }
+            l.removeAnimation(forKey: "unfoldScale")
+            l.removeAnimation(forKey: "unfoldFade")
+            l.transform = CATransform3DIdentity
+            l.opacity = 1
+        }
+    }
+
+    /// 把窗口图层复位到"完全展开"的静止态。
+    ///
+    /// 折叠动画是 isRemovedOnCompletion = false 的，动画值会留在图层上，
+    /// 不复位的话下次展开会从缩小状态起手——第一帧就跳一下。
+    private func resetLayer(afterFold: Bool) {
+        guard let container = animContainer, let layer = container.layer else { return }
+        layer.removeAnimation(forKey: "unfoldScale")
+        layer.removeAnimation(forKey: "unfoldFade")
+        layer.removeAnimation(forKey: "foldScale")
+        layer.removeAnimation(forKey: "foldFade")
+        layer.transform = CATransform3DIdentity
+        layer.opacity = 1
+        if afterFold {
+            // 锚点复位到中心：下次展开会重新按球的位置设，
+            // 但在那之前窗口如果被拖动，中心锚点不会让内容位移
+            container.applyAnchor(CGPoint(x: 0.5, y: 0.5))
+        }
+        unfold.progress = 1
+    }
+
+    /// 面板缩回悬浮球的位置。
+    private func playFold() {
+        guard let panel, let container = animContainer, let layer = container.layer else { return }
+
+        let orbFrame = FloatingOrb.shared.currentFrame
+        let anchor = orbFrame.map { unfoldAnchorPoint(panel: panel, orbFrame: $0) }
+            ?? CGPoint(x: 0.5, y: 0.5)
+        container.applyAnchor(anchor)
+
+        let endScale: CGFloat = 0.06
+        // 收起比展开快：关闭是"确认"动作，拖沓会烦
+        let duration: CFTimeInterval = Self.slowFactor * 0.24
+
+        let scaleAnim = CAKeyframeAnimation(keyPath: "transform.scale")
+        scaleAnim.values = MotionCurve.springValues(
+            from: 1.0, to: endScale, damping: 0.92, count: 30
+        ).map { NSNumber(value: Double($0)) }
+        scaleAnim.keyTimes = MotionCurve.keyTimes(count: 30)
+        scaleAnim.duration = duration
+        scaleAnim.timingFunction = CAMediaTimingFunction(name: .linear)
+        scaleAnim.fillMode = .forwards
+        scaleAnim.isRemovedOnCompletion = false
+
+        let fadeAnim = CAKeyframeAnimation(keyPath: "opacity")
+        fadeAnim.values = [1.0, 0.9, 0.45, 0.0]
+        fadeAnim.keyTimes = [0, 0.25, 0.6, 1.0]
+        fadeAnim.duration = duration
+        fadeAnim.fillMode = .forwards
+        fadeAnim.isRemovedOnCompletion = false
+
+        layer.add(scaleAnim, forKey: "foldScale")
+        layer.add(fadeAnim, forKey: "foldFade")
+        layer.transform = CATransform3DIdentity
+        layer.opacity = 1
     }
 
     private func positionNearOrb(_ orbFrame: NSRect) {

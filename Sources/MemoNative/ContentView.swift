@@ -130,19 +130,14 @@ struct ContentView: View {
             footer
         }
         .frame(minWidth: 520, idealWidth: 600, minHeight: 460, idealHeight: 660)
-        // 展开形变：从球所在方位长出来。
+        // 展开形变交给 Core Animation（见 PanelController.playUnfold/playFold）。
         //
-        // 缩放中心用球相对面板的方位，而不是恒定的 .center——
-        // 球在左边时从左边展开，球在上方时从上方展开，
-        // 视觉上"起点"才和球对得上，用户看到的是连贯的一次变形。
+        // 原来这里是 .scaleEffect(...) + .opacity(...)，由 @Published 逐帧驱动：
+        // 每一帧 SwiftUI 都要重算这一千多行的视图树，还要重新栅格化
+        // NSVisualEffectView 那层玻璃，帧率被压得很低，看起来一顿一顿的。
         //
-        // 缩放只做到 0.86 而不是 0：再小就会露出窗口边缘的直角，
-        // 玻璃的圆角在极小尺寸下也会失真，反而显得廉价。
-        .scaleEffect(
-            0.86 + 0.14 * unfold.progress,
-            anchor: unfold.anchor
-        )
-        .opacity(0.15 + 0.85 * Double(unfold.progress))
+        // 现在视图内容是静态的，窗口图层的 transform 由 CA 驱动——
+        // 合成发生在渲染服务里，SwiftUI 一次都不用重算，能跑满刷新率。
         // 背景层必须裁成圆角。
         //
         // 之前只在上面画了一圈 12pt 的描边，窗口本身仍是矩形：
