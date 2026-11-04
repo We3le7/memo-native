@@ -740,7 +740,7 @@ private struct PrioritySegment: View {
                     .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
                     // 未选中也用本档颜色的深色版，而不是统一灰：
                     // 四档一眼可分，但仍明显弱于选中态
-                    .foregroundStyle(isSelected ? level.tint : level.tint.opacity(0.72))
+                    .foregroundStyle(isSelected ? level.tint : level.tint.opacity(0.88))
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -750,10 +750,12 @@ private struct PrioritySegment: View {
             .contentShape(Rectangle().inset(by: -3))
             .background {
                 if isSelected {
+                    // 底块与描边用动态色：深色模式需要更实的填充和描边，
+                    // 否则选中的胶囊在深灰背景上几乎看不出边界。
                     Capsule()
-                        .fill(level.tint.opacity(0.13))
+                        .fill(level.tint.opacity(0.20))
                         .overlay(
-                            Capsule().strokeBorder(level.tint.opacity(0.30), lineWidth: 1)
+                            Capsule().strokeBorder(level.tint.opacity(0.75), lineWidth: 1)
                         )
                         .matchedGeometryEffect(id: "priorityIndicator", in: indicatorNamespace)
                 } else if hover.hovering {
@@ -1368,7 +1370,7 @@ private struct SpanSegment: View {
 
                 Text(label)
                     .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
-                    .foregroundStyle(isSelected ? tint : tint.opacity(0.72))
+                    .foregroundStyle(isSelected ? tint : tint.opacity(0.88))
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -1378,9 +1380,9 @@ private struct SpanSegment: View {
             .background {
                 if isSelected {
                     Capsule()
-                        .fill(tint.opacity(0.13))
+                        .fill(Theme.accentFill)
                         .overlay(
-                            Capsule().strokeBorder(tint.opacity(0.30), lineWidth: 1)
+                            Capsule().strokeBorder(Theme.accentStroke, lineWidth: 1)
                         )
                         .matchedGeometryEffect(id: "spanIndicator", in: indicatorNamespace)
                 } else if hover.hovering {

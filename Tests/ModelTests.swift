@@ -895,34 +895,53 @@ func testPaletteContrast() {
         ("normal", (0.639,0.478,0.000), (0.941,0.769,0.208)),
         ("low",    (0.020,0.541,0.478), (0.157,0.741,0.671)),
     ]
-    let accent: (Double,Double,Double) = (0.545, 0.361, 0.965)
+    // 强调色按外观分别取值
+    let accentLight: (Double,Double,Double) = (0.427, 0.247, 0.878)
+    let accentDark:  (Double,Double,Double) = (0.655, 0.545, 0.980)
 
     for (name, light, dark) in palette {
         let lc = UILogic.contrastRatio(light, UILogic.lightPanelBackground)
         let dc = UILogic.contrastRatio(dark, UILogic.darkPanelBackground)
         check(lc >= UILogic.minContrast,
-              "\(name) 浅色对比度 \(String(format: "%.2f", lc)) 不足 3.0")
+              "\(name) 浅色对比度应 ≥3.0，实测 \(String(format: "%.2f", lc))")
         check(dc >= UILogic.minContrast,
-              "\(name) 深色对比度 \(String(format: "%.2f", dc)) 不足 3.0")
+              "\(name) 深色对比度应 ≥3.0，实测 \(String(format: "%.2f", dc))")
     }
 
     // 强调色两种模式都要过线
-    let ac = UILogic.contrastRatio(accent, UILogic.lightPanelBackground)
-    let ad = UILogic.contrastRatio(accent, UILogic.darkPanelBackground)
-    check(ac >= UILogic.minContrast, "强调色浅色对比度 \(String(format: "%.2f", ac)) 不足")
-    check(ad >= UILogic.minContrast, "强调色深色对比度 \(String(format: "%.2f", ad)) 不足")
+    let ac = UILogic.contrastRatio(accentLight, UILogic.lightPanelBackground)
+    let ad = UILogic.contrastRatio(accentDark, UILogic.darkPanelBackground)
+    check(ac >= UILogic.minContrast, "强调色浅色对比度应 ≥3.0，实测 \(String(format: "%.2f", ac))")
+    // 深色要求比浅色更高：深底上人眼对饱和色的辨识更吃力，
+    // 3.94 的紫用户明确反馈"看不清"，6.12 才够。
+    check(ad >= 5.0, "强调色深色对比度应 ≥5.0，实测 \(String(format: "%.2f", ad))")
 
-    // 两侧均衡：弱的一侧不应低于强的一侧太多，
-    // 否则会出现"浅色好看、深色发闷"这种偏科
-    check(min(ac, ad) / max(ac, ad) > 0.7,
-          "强调色两侧应大致均衡，不能偏科")
+    // 深色必须比浅色更亮——否则说明取反了
+    let darkLum = UILogic.relativeLuminance(r: accentDark.0, g: accentDark.1, b: accentDark.2)
+    let lightLum = UILogic.relativeLuminance(r: accentLight.0, g: accentLight.1, b: accentLight.2)
+    check(darkLum > lightLum, "深色模式的强调色应比浅色模式更亮")
+
+    // 选中底块：填充+描边合成后要能看出边界
+    for (mode, acc, bg, fillOp, strokeOp) in [
+        ("深色", accentDark, UILogic.darkPanelBackground, 0.22, 0.75),
+        ("浅色", accentLight, UILogic.lightPanelBackground, 0.16, 0.75),
+    ] {
+        let fill = UILogic.blend(acc, bg, fillOp)
+        let stroke = UILogic.blend(acc, bg, strokeOp)
+        // 文字在填充底上要清楚
+        check(UILogic.contrastRatio(acc, fill) >= 3.0,
+              "\(mode) 选中文字压在底块上应 ≥3.0")
+        // 描边要勾得出边界
+        check(UILogic.contrastRatio(stroke, bg) >= UILogic.minContrast,
+              "\(mode) 选中描边应 ≥3.0，否则边界会糊")
+    }
 
     // 强调色不能和任何优先级的色相相同——否则界面里
     // "可交互"和"某档优先级"会撞色
     for (name, light, _) in palette {
-        let dist = pow(pow(accent.0 - light.0, 2)
-                     + pow(accent.1 - light.1, 2)
-                     + pow(accent.2 - light.2, 2), 0.5)
+        let dist = pow(pow(accentLight.0 - light.0, 2)
+                     + pow(accentLight.1 - light.1, 2)
+                     + pow(accentLight.2 - light.2, 2), 0.5)
         check(dist > 0.5, "强调色与 \(name) 太接近（距离 \(String(format: "%.2f", dist))）")
     }
 }

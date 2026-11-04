@@ -24,19 +24,55 @@ enum Theme {
     static let inkTertiary = Color.primary.opacity(0.44)
     static let inkQuaternary = Color.primary.opacity(0.24)
 
-    /// 交互强调色：紫罗兰。
+    /// 交互强调色：紫罗兰，按外观分别取值。
     ///
-    /// 原来是蓝色 (0.36, 0.52, 0.98)，在深色背景上发闷——
-    /// 蓝和深灰的明度接近，选中的胶囊底块几乎看不出边界。
+    /// 走了三步才定下来，每一步都是实测对比度推翻上一版：
     ///
-    /// 换成紫罗兰的理由（实测 WCAG 对比度）：
-    ///   蓝 #5C85FA    深色 4.89 / 浅色 3.12
-    ///   紫 #8B5CF6    深色 3.94 / 浅色 3.88   ← 取这个
-    /// 紫的**两侧更均衡**：蓝色在浅色下只有 3.12，紫色是 3.88。
+    ///   蓝 #5C85FA      深色 4.89 / 浅色 3.12   浅色偏弱
+    ///   紫 #8B5CF6      深色 3.94 / 浅色 3.88   深色偏暗（用户反馈看不清）
+    ///   紫 #A78BFA      深色 6.12 / 浅色 —      深色达标
+    ///   紫 #6D3FE0      —       / 浅色 5.60     浅色达标
     ///
-    /// 同时它离优先级四色都很远（最近 0.76，RGB 欧氏距离），
-    /// 不会被误认成某一档优先级。
-    static let accent = Color(red: 0.545, green: 0.361, blue: 0.965)  // #8B5CF6
+    /// 关键教训：**只调基色不够**。
+    /// 深色下发闷的真正原因是选中底块只有 13% 不透明度——
+    /// 合成后与背景对比仅 1.15，几乎融进背景。
+    /// 所以同时把底块提到 16~22%，并让描边参与勾边（60% 时 ≈3.0）。
+    ///
+    /// 深色用偏亮的 #A78BFA：深灰背景上，亮度才是可读性的决定因素。
+    /// 浅色用偏深的 #6D3FE0：白底上深色更清楚。
+    static let accent = Color(nsColor: NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        // 深色 #A78BFA / 浅色 #6D3FE0
+        return isDark
+            ? NSColor(srgbRed: 0.655, green: 0.545, blue: 0.980, alpha: 1)
+            : NSColor(srgbRed: 0.427, green: 0.247, blue: 0.878, alpha: 1)
+    })
+
+    /// 选中底块：深色背景上淡填充几乎不可见，直接给两套颜色。
+    ///
+    /// 不用「一个不透明度常量」：那样只在启动时求值一次，
+    /// 用户切换浅色/深色外观后不会更新，底块会停在旧值上。
+    /// 用动态 Color 才能跟着外观实时变。
+    static let accentFill = Color(nsColor: NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let rgb: (Double, Double, Double) = isDark
+            ? (0.655, 0.545, 0.980)   // 深色：亮紫
+            : (0.427, 0.247, 0.878)   // 浅色：深紫
+        return NSColor(srgbRed: rgb.0, green: rgb.1, blue: rgb.2,
+                       alpha: isDark ? 0.22 : 0.16)
+    })
+
+    /// 选中底块的描边，比填充更实一点，负责勾出边界。
+    static let accentStroke = Color(nsColor: NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let rgb: (Double, Double, Double) = isDark
+            ? (0.655, 0.545, 0.980)
+            : (0.427, 0.247, 0.878)
+        // 75% 才能让描边在两种外观下都超过 3.0：
+        // 深色 4.04 / 浅色 3.52。低于这个值边界就糊了。
+        return NSColor(srgbRed: rgb.0, green: rgb.1, blue: rgb.2,
+                       alpha: 0.75)
+    })
 
     // 表面层次：从平面到抬起
     static let surface = Color.primary.opacity(0.045)

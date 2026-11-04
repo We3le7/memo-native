@@ -398,3 +398,16 @@ extension UILogic {
     /// 非文本元素的可读下限（WCAG 1.4.11）。
     static let minContrast: Double = 3.0
 }
+
+extension UILogic {
+    /// 把带透明度的前景色合成到背景上，得到最终呈现的颜色。
+    static func blend(
+        _ fg: (Double, Double, Double),
+        _ bg: (Double, Double, Double),
+        _ alpha: Double
+    ) -> (Double, Double, Double) {
+        (fg.0 * alpha + bg.0 * (1 - alpha),
+         fg.1 * alpha + bg.1 * (1 - alpha),
+         fg.2 * alpha + bg.2 * (1 - alpha))
+    }
+}
