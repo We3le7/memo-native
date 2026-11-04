@@ -24,6 +24,10 @@
 |---|---|
 | ![浅色](docs/preview-light.png) | ![深色](docs/preview-dark.png) |
 
+悬浮球各状态（无待办 / 待办 / 逾期 / 未读 / 悬停 / 展开）：
+
+![悬浮球状态](docs/orb-states.png)
+
 设置页：
 
 | 浅色 | 深色 |

@@ -9,6 +9,12 @@ import Combine
 // 定位：球的位置持久化，重启后回到原处；吸附到屏幕边缘内侧。
 
 // MARK: - 球体视图
+//
+// 设计目标：像 Apple 自己出的东西——
+//   * 靠「材质 + 光」而不是「描边 + 色块」来塑形
+//   * 高光从左上打进来，底部有一点反射光，形成球体感
+//   * 状态只用一个色相表达（逾期=红），其余全部走灰阶层级
+//   * 所有变化都带一点弹性，但不夸张
 
 struct OrbView: View {
     let pending: Int
@@ -17,70 +23,163 @@ struct OrbView: View {
     let expanded: Bool
     let hovering: Bool
 
+    /// 逾期优先展示：逾期是唯一需要立刻处理的状态
     private var badge: Int { overdue > 0 ? overdue : pending }
+    private var isAlerting: Bool { overdue > 0 && !expanded }
+
+    /// 悬停时轻微放大，按下时由外层缩回——形成"被按下去"的手感
+    private var scale: CGFloat {
+        if expanded { return 1.0 }
+        return hovering ? 1.04 : 1.0
+    }
 
     var body: some View {
         ZStack {
-            // 底：材质 + 极淡描边，保持与面板一致的克制
+            // ── 1. 球体本体 ───────────────────────────────
+            // 用径向渐变模拟球面：左上受光，右下转暗
             Circle()
-                .fill(.regularMaterial)
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.primary.opacity(0.10),
+                            Color.primary.opacity(0.035)
+                        ],
+                        center: UnitPoint(x: 0.32, y: 0.28),
+                        startRadius: 0,
+                        endRadius: OrbMetrics.bubble * 0.72
+                    )
+                )
 
+            // 材质叠在渐变下面，保留毛玻璃的透光感
             Circle()
-                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5)
+                .fill(.ultraThinMaterial)
+                .opacity(0.92)
 
-            // 有逾期时外圈浮现一圈红晕，是整颗球上唯一的高饱和色
-            if overdue > 0 && !expanded {
+            // ── 2. 边缘：上亮下暗，制造立体轮廓 ──────────
+            Circle()
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.42),
+                            Color.primary.opacity(0.06),
+                            Color.black.opacity(0.10)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 0.75
+                )
+
+            // ── 3. 高光：左上角一小片弧形反光 ────────────
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.55), Color.white.opacity(0.0)],
+                        startPoint: .top,
+                        endPoint: .center
+                    )
+                )
+                .frame(width: OrbMetrics.bubble * 0.46, height: OrbMetrics.bubble * 0.46)
+                .offset(x: -OrbMetrics.bubble * 0.13, y: -OrbMetrics.bubble * 0.15)
+                .blur(radius: 2.5)
+                .blendMode(.plusLighter)
+                .opacity(hovering ? 0.92 : 0.70)
+
+            // ── 4. 逾期光晕：整颗球唯一的彩色 ────────────
+            if isAlerting {
                 Circle()
-                    .strokeBorder(Priority.urgent.tint.opacity(0.55), lineWidth: 1.5)
-                    .padding(1.5)
+                    .strokeBorder(Priority.urgent.tint.opacity(0.5), lineWidth: 1.5)
+                    .padding(1)
+
+                // 外扩一圈柔和的光，像系统通知那样"呼吸"
+                Circle()
+                    .fill(Priority.urgent.tint.opacity(0.14))
+                    .blur(radius: 7)
+                    .opacity(hovering ? 1.0 : 0.7)
             }
 
-            // 内容：数字为主，没有数字时显示极简的点阵
-            if badge > 0 {
-                Text("\(min(badge, 99))")
-                    .font(.system(size: badge > 9 ? 15 : 17, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(overdue > 0 ? Priority.urgent.tint : Color.primary)
-                    .contentTransition(.numericText())
-            } else {
-                // 无待办：安静的三点，表示"这里还有东西"
-                HStack(spacing: 3.5) {
-                    ForEach(0..<3, id: \.self) { index in
-                        Circle()
-                            .fill(Color.primary.opacity(index == 0 ? 0.55 : 0.28))
-                            .frame(width: 3.5, height: 3.5)
-                    }
-                }
-            }
+            // ── 5. 内容 ─────────────────────────────────
+            content
 
-            // 未读提醒：右上角一个小点
-            if unread > 0 {
+            // ── 6. 未读提醒：右上角小圆点，带白边 ────────
+            if unread > 0 && !expanded {
                 Circle()
                     .fill(Color.red)
-                    .frame(width: 6, height: 6)
-                    .offset(x: 16, y: -16)
-                    .transition(.scale.combined(with: .opacity))
+                    .frame(width: 7, height: 7)
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.85), lineWidth: 1.2))
+                    .offset(
+                        x: OrbMetrics.bubble * 0.31,
+                        y: -OrbMetrics.bubble * 0.31
+                    )
+                    .shadow(color: .red.opacity(0.35), radius: 3)
+                    .transition(.scale(scale: 0.4).combined(with: .opacity))
             }
 
-            // 展开态的指示：底部一条极短横线
+            // ── 7. 展开态：底部一条短横线 ────────────────
             if expanded {
                 Capsule()
-                    .fill(Color.primary.opacity(0.35))
-                    .frame(width: 12, height: 2)
-                    .offset(y: 16)
-                    .transition(.opacity)
+                    .fill(Color.primary.opacity(0.30))
+                    .frame(width: 11, height: 1.8)
+                    .offset(y: OrbMetrics.bubble * 0.30)
+                    .transition(.opacity.combined(with: .scale(scale: 0.6)))
             }
         }
         .frame(width: OrbMetrics.bubble, height: OrbMetrics.bubble)
-        .scaleEffect(hovering ? 1.05 : 1.0)
-        .shadow(
-            color: .black.opacity(hovering ? 0.22 : 0.14),
-            radius: hovering ? 10 : 7,
-            y: hovering ? 4 : 3
+        .clipShape(Circle())
+        .overlay(
+            // 内阴影：让边缘有一点厚度，不像贴纸
+            Circle()
+                .strokeBorder(Color.black.opacity(0.05), lineWidth: 2.5)
+                .blur(radius: 1.5)
+                .mask(Circle().strokeBorder(lineWidth: 2.5))
         )
-        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: hovering)
-        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: expanded)
-        .animation(.spring(response: 0.34, dampingFraction: 0.8), value: badge)
+        .scaleEffect(scale)
+        // 双层阴影：近处紧实的接触阴影 + 远处柔和的投影
+        .shadow(color: .black.opacity(hovering ? 0.16 : 0.10), radius: 2, y: 1)
+        .shadow(
+            color: .black.opacity(hovering ? 0.22 : 0.16),
+            radius: hovering ? 11 : 9,
+            y: hovering ? 5 : 4
+        )
+        .animation(.spring(response: 0.30, dampingFraction: 0.70), value: hovering)
+        .animation(.spring(response: 0.34, dampingFraction: 0.76), value: expanded)
+        .animation(.spring(response: 0.38, dampingFraction: 0.80), value: badge)
+    }
+
+    // MARK: 内容
+
+    @ViewBuilder
+    private var content: some View {
+        if expanded {
+            // 展开态：一个安静的「收起」箭头，替代数字
+            Image(systemName: "chevron.down")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.primary.opacity(0.55))
+                .transition(.scale(scale: 0.7).combined(with: .opacity))
+        } else if badge > 0 {
+            VStack(spacing: -1) {
+                Text("\(min(badge, 99))")
+                    .font(.system(size: badge > 99 ? 13 : (badge > 9 ? 16 : 18),
+                                  weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(isAlerting ? Priority.urgent.tint : Color.primary.opacity(0.88))
+                    .contentTransition(.numericText())
+
+                // 有逾期时补一行极小提示，避免只看到数字不知道含义
+                if isAlerting {
+                    Text("逾期")
+                        .font(.system(size: 7.5, weight: .semibold))
+                        .foregroundStyle(Priority.urgent.tint.opacity(0.75))
+                        .transition(.opacity)
+                }
+            }
+            .offset(y: isAlerting ? -1 : 0)
+        } else {
+            // 无待办：三个点改为一条更安静的细线，像"待输入"的光标
+            Capsule()
+                .fill(Color.primary.opacity(0.22))
+                .frame(width: 13, height: 2.2)
+        }
     }
 }
 
@@ -118,6 +217,7 @@ final class FloatingOrb {
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }
+
 
     /// 面板据此决定从哪儿展开
     var currentFrame: NSRect? { panel?.frame }
