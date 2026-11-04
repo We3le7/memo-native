@@ -24,6 +24,7 @@ testSpan()
     testFoldFadeNotTooFast()
     testWindowLevelDuringFold()
     testFoldSameSpeedAsUnfold()
+    testGraceCoversUnfold()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -658,6 +659,36 @@ func testFoldSameSpeedAsUnfold() {
         check(d >= 0.25, "时长不应短于 0.25s（看不清形变）")
         check(d <= 0.60, "时长不应长于 0.60s（显得拖沓）")
     }
+}
+
+@MainActor
+
+
+/// 展开保护期必须覆盖动画全程。
+///
+/// 这是"展开时偶尔一闪一闪"的根因：保护期 0.35s，动画 0.34s，
+/// 几乎贴在一起。系统在激活过程中发来一次失焦通知（常在 0.4s 左右），
+/// 恰好落在保护期之外——面板刚展开就被收起，然后又被唤出，
+/// 看起来就是闪了一下。
+///
+/// 约束是两头都要满足：
+///   - 覆盖动画（否则被腰斩）
+///   - 别太长（否则用户快速切走时面板赖着不走）
+func testGraceCoversUnfold() {
+    check(UILogic.graceCoversUnfold,
+          "保护期(\(UILogic.revealGraceSeconds)s)必须大于动画时长(\(UILogic.unfoldSeconds)s)")
+
+    // 至少留 0.2s 余量：系统通知可能在动画结束后才到
+    let margin = UILogic.revealGraceSeconds - UILogic.unfoldSeconds
+    check(margin >= 0.2, "保护期应比动画至少多 0.2s（当前余量 \(margin)s）")
+
+    // 但也不能太长：1 秒内切走应该能正常收起
+    check(UILogic.revealGraceSeconds <= 1.0,
+          "保护期不应超过 1s（否则快速切走时面板赖着不走）")
+
+    // 与折叠无关：折叠不需要保护期，因为收起本身就是用户意图
+    check(UILogic.revealGraceSeconds > UILogic.foldSeconds,
+          "保护期也应覆盖折叠时长")
 }
 
 @MainActor

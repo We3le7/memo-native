@@ -99,10 +99,13 @@ final class PanelController {
     private var shownAt: Date = .distantPast
     /// 刚显示后的保护期：系统在启动/切 App 瞬间会连发失焦通知，
     /// 这段时间内的失焦不算“用户主动点了别处”。
-    /// 原来是 1.6s，太长了——用户展开面板、看一眼、立刻切走，
-    /// 这一整段都落在保护期内，面板就留在屏幕上不收起。
-    /// 系统连发通知只在启动那几帧，0.35s 足够盖住。
-    private let revealGrace: TimeInterval = 0.35
+    /// 这个值必须**大于展开动画时长**（0.34s），否则会出现：
+    /// 展开动画还在播，系统因为在激活过程中发来一次失焦通知，
+    /// 面板被中途收掉——观感就是"一闪"。
+    ///
+    /// 也不能太长：用户展开、看一眼、立刻切走，应该能正常收起。
+    /// 0.75s ≈ 动画时长 + 0.4s 的余量，两个目标都满足。
+    private let revealGrace: TimeInterval = UILogic.revealGraceSeconds
 
     private var inRevealGrace: Bool {
         Date().timeIntervalSince(shownAt) < revealGrace
@@ -191,24 +194,24 @@ final class PanelController {
 
         panel.alphaValue = 1
 
-        panel.makeKeyAndOrderFront(nil)
-
+        // 先把图层摆到"开始状态"，再显示窗口，最后立刻起播动画。
+        //
+        // 原来是：显示窗口 → 下一轮 runloop 才 playUnfold。
+        // 中间这一帧窗口已经可见，但内容还是上一次留下的图层状态
+        //（可能是满尺寸、也可能是残留的透明度）——那一帧就是"一闪"。
+        //
+        // 现在顺序固定为：设起始态 → orderFront → 同一帧起播。
         isRevealing = true
+        prepareUnfoldStartState()
+        panel.makeKeyAndOrderFront(nil)
+        playUnfoldNow()
+
+        // 激活是异步的：下一轮 runloop 再确认一次 key，避免"启动即收起"。
+        // 这里只动 key，不再重复 orderFront——重复调用会让窗口再合成一次。
         DispatchQueue.main.async {
-            FrameProbe.shared.start("展开")
-            self.playUnfold()
-            // 探针窗口与折叠对齐（都是动画时长 + 0.06），
-            // 否则两边采样窗口不同，帧数没法横向比较。
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + Self.slowFactor * PanelController.unfoldDuration + 0.06
-            ) {
-                FrameProbe.shared.stop()
-                self.isRevealing = false
+            if panel.isVisible, !panel.isKeyWindow {
+                panel.makeKey()
             }
-        }
-        // 激活是异步的：下一轮 runloop 再确认一次 key，避免"启动即收起"
-        DispatchQueue.main.async {
-            panel.makeKeyAndOrderFront(nil)
         }
 
         // SwiftUI 需要一次布局后 focus 才生效，先立即发一次，再补一次
@@ -481,9 +484,8 @@ final class PanelController {
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                guard let self, let panel = self.panel, panel.isVisible else {
-                    return
-                }
+                guard let self, let panel = self.panel else { return }
+                guard panel.isVisible else { return }
                 if self.isHiding || self.inRevealGrace {
                     return
                 }
@@ -608,18 +610,38 @@ final class PanelController {
     /// 用 CAKeyframeAnimation 而不是 SwiftUI 的 withAnimation：
     /// 后者每帧重算视图树，这一千多行内容加玻璃层根本跑不满帧率。
     /// CA 的动画在渲染服务里插值，主线程只需提交一次。
-    private func playUnfold() {
+    /// 把图层摆到"展开前"的状态：锚点就位、缩放压到起始值、透明度归零。
+    ///
+    /// 必须在 `orderFront` **之前**调用。否则窗口会先用上一轮遗留的
+    /// 图层状态合成一帧——满尺寸或残留透明度，那一帧就是"一闪"。
+    private func prepareUnfoldStartState() {
         guard let panel, let container = animContainer, let layer = container.layer else { return }
 
-        // 球关着时没有可收敛的锚点，从中心展开。
-        // 否则会朝一个看不见的位置缩——那个位置是球被隐藏前的旧坐标。
         let orbFrame = FloatingOrb.shared.isEnabled ? FloatingOrb.shared.currentFrame : nil
         let anchor = orbFrame.map { unfoldAnchorPoint(panel: panel, orbFrame: $0) }
             ?? CGPoint(x: 0.5, y: 0.5)
         container.applyAnchor(anchor)
 
-        // 从小长到大 + 淡入。0.62 是能看清形变又不拖沓的下限；
-        // 再小就只剩"闪一下"，看不出是从球那里长出来的。
+        // 直接压到起始值，且不挂动画——此时窗口还没显示，不会有过渡
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.removeAnimation(forKey: "unfoldScale")
+        layer.removeAnimation(forKey: "unfoldFade")
+        layer.removeAnimation(forKey: "foldScale")
+        layer.removeAnimation(forKey: "foldFade")
+        layer.transform = CATransform3DMakeScale(
+            PanelController.unfoldStartScale, PanelController.unfoldStartScale, 1)
+        layer.opacity = 0
+        CATransaction.commit()
+    }
+
+    /// 起播展开动画。调用时窗口必须已经显示。
+    private func playUnfoldNow() {
+        guard let panel, let container = animContainer, let layer = container.layer else { return }
+        _ = panel
+
+        FrameProbe.shared.start("展开")
+
         let startScale = PanelController.unfoldStartScale
         let duration: CFTimeInterval = Self.slowFactor * PanelController.unfoldDuration
 
@@ -637,7 +659,6 @@ final class PanelController {
         scaleAnim.isRemovedOnCompletion = false
 
         let fadeAnim = CAKeyframeAnimation(keyPath: "opacity")
-        // 前 40% 就淡到接近不透明，避免"大小在变但看不清内容"的糊感
         fadeAnim.values = [0.0, 0.55, 0.88, 1.0, 1.0]
         fadeAnim.keyTimes = [0, 0.22, 0.45, 0.62, 1.0]
         fadeAnim.duration = duration
@@ -647,23 +668,24 @@ final class PanelController {
         layer.add(scaleAnim, forKey: "unfoldScale")
         layer.add(fadeAnim, forKey: "unfoldFade")
 
-        // 动画结束后把模型值钉到终态，避免 isRemovedOnCompletion 造成的回弹
         layer.transform = CATransform3DIdentity
         layer.opacity = 1
 
-
-
-
-
-
-        // 兜底：万一动画被打断，0.4 秒后强制归位
         DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.06) { [weak self] in
             guard let self, let l = self.animContainer?.layer else { return }
+            FrameProbe.shared.stop()
+            self.isRevealing = false
             l.removeAnimation(forKey: "unfoldScale")
             l.removeAnimation(forKey: "unfoldFade")
             l.transform = CATransform3DIdentity
             l.opacity = 1
         }
+    }
+
+    /// 兼容入口：准备 + 播放，一步到位。
+    private func playUnfold() {
+        prepareUnfoldStartState()
+        playUnfoldNow()
     }
 
     /// 把窗口图层复位到"完全展开"的静止态。

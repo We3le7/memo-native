@@ -259,3 +259,18 @@ extension UILogic {
         abs(unfoldSeconds - foldSeconds) < 0.0001
     }
 }
+
+extension UILogic {
+    /// 展开保护期（秒）。
+    ///
+    /// 必须**大于动画时长**，否则会出现：展开动画还在播，
+    /// 系统在激活过程中发来一次失焦通知，面板被中途收掉——观感就是"一闪"。
+    ///
+    /// 也不能太长：用户展开、看一眼、立刻切走，应该能正常收起。
+    static let revealGraceSeconds: Double = 0.75
+
+    /// 保护期是否覆盖得动画全程。
+    static var graceCoversUnfold: Bool {
+        revealGraceSeconds > unfoldSeconds
+    }
+}
