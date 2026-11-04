@@ -22,6 +22,8 @@ struct OrbView: View {
     let unread: Int
     let expanded: Bool
     let hovering: Bool
+    /// 玻璃强度 0…1，来自设置，影响球体的通透度与轮廓强度
+    var strength: Double = GlassAppearance.defaultStrength
 
     /// 逾期优先展示：逾期是唯一需要立刻处理的状态
     private var badge: Int { overdue > 0 ? overdue : pending }
@@ -36,7 +38,17 @@ struct OrbView: View {
     var body: some View {
         ZStack {
             // ── 1. 球体本体 ───────────────────────────────
-            // 用径向渐变模拟球面：左上受光，右下转暗
+            // 材质打底：负责"毛玻璃"的模糊与透光
+            Circle()
+                .fill(.ultraThinMaterial)
+                .opacity(GlassAppearance.orbMaterialOpacity(for: strength))
+
+            // 球面本身的底色。这一层是"实心度"的来源：
+            // 强度低时它接近不透明，球是一个干净的实心球；
+            // 强度高时它退到很淡，桌面就能明显透上来。
+            //
+            // 少了这一层，球在低强度下会溶进背景——球没有实体轮廓，
+            // 只剩下一圈高光，等于看不见。
             Circle()
                 .fill(
                     RadialGradient(
@@ -50,17 +62,17 @@ struct OrbView: View {
                     )
                 )
 
-            // 材质叠在渐变下面，保留毛玻璃的透光感
+            // 实心打底：跟随强度反向变化
             Circle()
-                .fill(.ultraThinMaterial)
-                .opacity(0.92)
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .opacity(GlassAppearance.orbSolidOpacity(for: strength))
 
             // ── 2. 边缘：上亮下暗，制造立体轮廓 ──────────
             Circle()
                 .strokeBorder(
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(0.42),
+                            Color.white.opacity(GlassAppearance.orbRimOpacity(for: strength)),
                             Color.primary.opacity(0.06),
                             Color.black.opacity(0.10)
                         ],
@@ -225,7 +237,26 @@ final class FloatingOrb {
     func configure(store: MemoStore, settings: AppSettings) {
         self.store = store
         self.settings = settings
+        hoverState?.strength = settings.glassStrength
+
+        // 设置里拖动滑杆 → 立刻反映到球上，不必重开面板。
+        // 用通知而不是让 FloatingOrb 直接持有 AppSettings 的 Published：
+        // 球是单例、设置是注入的，两者生命周期不同，订阅解耦更好收尾。
+        glassObserver = NotificationCenter.default.addObserver(
+            forName: .memoGlassStrengthChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // 通知回调不在 MainActor 上，显式切回主线程改 UI 状态
+            Task { @MainActor in
+                guard let self, let settings = self.settings else { return }
+                self.hoverState?.strength = settings.glassStrength
+            }
+        }
     }
+
+    /// 玻璃强度变化的订阅句柄，deinit 里要注销
+    private var glassObserver: NSObjectProtocol?
 
     // MARK: 生命周期
 
@@ -301,6 +332,10 @@ final class FloatingOrb {
         // store 只在宿主视图里通过环境注入，这里只需确认已配置
         guard panel == nil, store != nil else { return }
         let hover = OrbHover()
+        // 建视图时就把当前强度带进去。
+        // configure() 早于 buildIfNeeded()，那时 hoverState 还是 nil，
+        // 只靠 configure 里赋值会让首帧用默认强度——表现为"改了设置但球没变"。
+        hover.strength = settings?.glassStrength ?? GlassAppearance.defaultStrength
         hoverState = hover
 
         let root = AnyView(
@@ -584,6 +619,8 @@ final class OrbHover: ObservableObject {
     @Published var pending = 0
     @Published var overdue = 0
     @Published var unread = 0
+    /// 玻璃强度，跟随设置
+    @Published var strength: Double = GlassAppearance.defaultStrength
 
     private func sync() {}
 }
@@ -598,7 +635,8 @@ struct OrbContent: View {
             overdue: hover.overdue,
             unread: hover.unread,
             expanded: hover.expanded,
-            hovering: hover.isHovering
+            hovering: hover.isHovering,
+            strength: hover.strength
         )
         .frame(width: OrbMetrics.size, height: OrbMetrics.size)
         .fixedSize()

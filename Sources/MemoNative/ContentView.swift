@@ -125,13 +125,27 @@ struct ContentView: View {
         .frame(minWidth: 520, idealWidth: 600, minHeight: 460, idealHeight: 660)
         .background(
             ZStack {
-                VisualEffectBackground()
-                // 顶部一层极淡的着色，让材质不再「灰平」，而是有光源方向
-                LinearGradient(
-                    colors: [Theme.accent.opacity(0.05), .clear],
-                    startPoint: .top, endPoint: .center
-                )
+                VisualEffectBackground(settings: settings)
+                GlassVeil(strength: settings.glassStrength)
             }
+        )
+        // 玻璃边缘：上沿一点亮、下沿一点暗，模拟光线掠过玻璃厚边。
+        // 这是 Apple 系玻璃最有辨识度的一笔——没有它，玻璃就只是一块半透明色块。
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.30),
+                            Color.white.opacity(0.04),
+                            Color.black.opacity(0.10)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 0.75
+                )
+                .allowsHitTesting(false)
         )
         .onAppear {
             ui.customDate = Date()
@@ -1108,15 +1122,61 @@ struct QuietAction: View {
 // MARK: - 背景材质
 
 struct VisualEffectBackground: NSViewRepresentable {
+    /// 玻璃强度来自设置，改成 ObservedObject 才能实时响应滑杆拖动
+    @ObservedObject var settings: AppSettings
+
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = .popover
         view.blendingMode = .behindWindow
         view.state = .active
+        view.isEmphasized = false
+        apply(to: view)
         return view
     }
 
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        apply(to: nsView)
+    }
+
+    private func apply(to view: NSVisualEffectView) {
+        let target = GlassAppearance.materialAlpha(for: settings.glassStrength)
+
+        guard abs(view.alphaValue - target) > 0.001 else { return }
+        // 做一点插值，拖动滑杆时不会一跳一跳的
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.16
+            ctx.allowsImplicitAnimation = true
+            view.animator().alphaValue = target
+        }
+    }
+}
+
+struct GlassVeil: View {
+    var strength: Double
+
+    var body: some View {
+        ZStack {
+            // 着色浓度随强度反向变化：越透的玻璃，越需要一点点色彩把台面压住，
+            // 否则背后高对比的内容会顶穿前景文字的可读性。
+            Color.white.opacity(GlassAppearance.veilOpacity(for: strength))
+
+            // 品牌色极淡着色，避免整块中性灰
+            LinearGradient(
+                colors: [Theme.accent.opacity(0.05), .clear],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            // 顶部受光
+            LinearGradient(
+                colors: [Color.white.opacity(0.08), .clear],
+                startPoint: .top,
+                endPoint: .center
+            )
+        }
+        .allowsHitTesting(false)
+        .opacity(1)
+    }
 }
 
 extension Notification.Name {
@@ -1124,5 +1184,6 @@ extension Notification.Name {
     static let memoSetPriorityShortcut = Notification.Name("memo.setPriorityShortcut")
     static let memoOpenPanel = Notification.Name("memo.openPanel")
     static let memoMenuBarVisibilityChanged = Notification.Name("memo.menuBarVisibility")
+    static let memoGlassStrengthChanged = Notification.Name("memo.glassStrengthChanged")
     static let memoOpenSettings = Notification.Name("memo.openSettings")
 }

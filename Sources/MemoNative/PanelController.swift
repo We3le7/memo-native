@@ -163,6 +163,11 @@ final class PanelController {
         // 自己接管失焦处理，系统级自动隐藏会把 Dock 图标一起藏掉
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
+        // 关键：让窗口本身透明，玻璃材质才能采到桌面内容。
+        // NSPanel 默认 isOpaque = true，会先铺一层不透明底，
+        // 导致 .behindWindow 材质只能采到那块底色，玻璃效果等于没有。
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
         panel.contentView = hosting
         panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true

@@ -14,6 +14,7 @@ testOrbMetrics()
 testCorruptedFileProtection()
 testUndoDelete()
 testOrbFreePosition()
+testGlassAppearance()
 
 // 1. 排序：日期 → 完成态 → 优先级
 let base = Memo(id: "x", title: "", priority: .normal, dueDate: "2026-11-05", note: "",
@@ -298,3 +299,61 @@ func testOrbFreePosition() {
     check(safe == center, "没有屏幕信息时原样返回，不崩溃")
 }
 
+
+/// 玻璃强度的参数映射。
+///
+/// 这段逻辑最容易出的错是「方向反了」——用户往右拖本意是更透，
+/// 结果材质 alpha 跟着变大反而更实。肉眼很难分辨，但用户会觉得滑杆没用。
+func testGlassAppearance() {
+    // 方向：强度越高，alpha 越低（alpha 低 = 更透）
+    let low = GlassAppearance.materialAlpha(for: 0.0)
+    let mid = GlassAppearance.materialAlpha(for: 0.5)
+    let high = GlassAppearance.materialAlpha(for: 1.0)
+    check(low > mid && mid > high, "强度越大，材质 alpha 应越小（更透）")
+    check(low == 1.0, "强度 0 应完全不透（alpha = 1）")
+    check(high > 0.3, "最透也不能到 0，否则模糊会消失只剩灰雾")
+
+    // 着色层：越透，遮得越少
+    check(GlassAppearance.veilOpacity(for: 0) > GlassAppearance.veilOpacity(for: 1),
+          "越透的玻璃，着色层应越淡")
+
+    // 球的材质：同样单调递减
+    check(GlassAppearance.orbMaterialOpacity(for: 0) > GlassAppearance.orbMaterialOpacity(for: 1),
+          "球在更透的强度下材质应更薄")
+
+    // 实测锚点：球心 alpha 应随强度单调下降，且两端差异要足够明显
+    //
+    // 这一条是为了防"调了参数但用户看不出变化"——
+    // 之前底衬权重过大，实测 alpha 只从 1.00 走到 0.80，滑杆几乎无效。
+    let orbAlpha = { (s: Double) -> Double in
+        let solid = GlassAppearance.orbSolidOpacity(for: s)
+        let mat = GlassAppearance.orbMaterialOpacity(for: s)
+        return 1 - (1 - solid) * (1 - mat)
+    }
+    check(orbAlpha(0) > 0.95, "强度 0 时球应近乎不透明，保证清晰可辨")
+    check(orbAlpha(1) < 0.72, "强度 1 时球要明显透光，否则滑杆形同虚设")
+    check(orbAlpha(0) - orbAlpha(1) > 0.3, "两端透光差应足够大，用户能一眼看出区别")
+    check(orbAlpha(0.5) < orbAlpha(0) && orbAlpha(0.5) > orbAlpha(1), "中间档应落在两端之间")
+
+    // 底衬在高强度下必须完全让位，否则会把透光堵回去
+    check(GlassAppearance.orbSolidOpacity(for: 1) < 0.02, "最高强度时底衬应几乎退出")
+
+    // 球的边缘高光：越透越需要轮廓，方向相反
+    check(GlassAppearance.orbRimOpacity(for: 1) > GlassAppearance.orbRimOpacity(for: 0),
+          "玻璃越透，边缘高光越要强，否则球会化进背景")
+
+    // 越界钳制：外部传进任何值都不能把参数带飞
+    check(GlassAppearance.materialAlpha(for: -5) == 1.0, "负强度按 0 处理")
+    check(GlassAppearance.materialAlpha(for: 9) == GlassAppearance.materialAlpha(for: 1.0),
+          "超过 1 的强度按 1 处理")
+
+    // 档位名：单调，且两端有区分
+    check(GlassAppearance.label(for: 0.05) == "几乎不透明", "低强度档位名")
+    check(GlassAppearance.label(for: 0.95) == "极透", "高强度档位名")
+    check(GlassAppearance.defaultStrength > 0 && GlassAppearance.defaultStrength < 1,
+          "默认值应在两端之间")
+
+    // 默认值应落在「标准」区间，避免一上来就极端
+    check(GlassAppearance.label(for: GlassAppearance.defaultStrength) == "标准",
+          "默认强度应落在标准档")
+}

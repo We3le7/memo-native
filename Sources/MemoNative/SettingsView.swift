@@ -30,6 +30,18 @@ final class AppSettings: ObservableObject {
             FloatingOrb.shared.isEnabled = showFloatingOrb
         }
     }
+    /// 玻璃强度 0…1。数值越大，毛玻璃越"薄"、透光越多。
+    ///
+    /// 之所以做成 0…1 的用户向刻度而不是直接暴露 NSVisualEffectView 的
+    /// alphaValue，是因为两者方向相反（alpha 越小越透），直接用会反直觉。
+    /// 内部换算集中在 GlassAppearance 里，UI 与实现各自只关心自己的语义。
+    @Published var glassStrength: Double {
+        didSet {
+            UserDefaults.standard.set(glassStrength, forKey: "glassStrength")
+            NotificationCenter.default.post(name: .memoGlassStrengthChanged, object: nil)
+        }
+    }
+
     @Published var dismissBehavior: PanelDismissBehavior {
         didSet {
             UserDefaults.standard.set(dismissBehavior.code, forKey: "dismissBehavior")
@@ -46,6 +58,8 @@ final class AppSettings: ObservableObject {
         hotkey = defaults.string(forKey: "hotkey") ?? HotkeyManager.defaultHotkey
         dismissBehavior = PanelDismissBehavior.from(code: defaults.string(forKey: "dismissBehavior"))
         showFloatingOrb = defaults.object(forKey: "orbEnabled") as? Bool ?? true
+        let stored = defaults.object(forKey: "glassStrength") as? Double
+        glassStrength = stored.map { min(max($0, 0), 1) } ?? GlassAppearance.defaultStrength
     }
 
     var reminderTimeText: String { String(format: "%02d:%02d", reminderHour, reminderMinute) }
@@ -131,6 +145,10 @@ struct SettingsView: View {
                 IconGlyph(system: "xmark", help: "关闭（Esc）") { onClose() }
             }
             .padding(.bottom, 2)
+
+            SettingCard(title: "玻璃效果", detail: "调整面板与悬浮球的通透程度。越往右，背后的内容越容易透上来。") {
+                GlassStrengthField(strength: $settings.glassStrength)
+            }
 
             SettingCard(title: "每日提醒", detail: "到点后由系统通知中心提醒所有未完成事项，App 未运行也会弹。") {
                 TimeField(hour: $settings.reminderHour, minute: $settings.reminderMinute)
@@ -302,5 +320,40 @@ struct TimeField: View {
                 if holder.text != formatted { holder.text = formatted }
             }
         }
+    }
+}
+
+// MARK: - 玻璃强度调节
+
+/// 玻璃强度滑杆 + 档位文字。
+///
+/// 直接给一个裸 Slider 会有两个问题：拖动时没有即时反馈、也不知道"多少算合适"。
+/// 所以这里补上档位名，并在两端加了图标，让用户不用试错就能定位。
+struct GlassStrengthField: View {
+    @Binding var strength: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Image(systemName: "circle.dotted")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.inkTertiary)
+
+                Slider(value: $strength, in: 0...1)
+                    .controlSize(.small)
+                    .tint(Theme.accent)
+
+                Image(systemName: "circle.hexagongrid")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.inkTertiary)
+
+                Text(GlassAppearance.label(for: strength))
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .frame(width: 58, alignment: .trailing)
+                    .contentTransition(.opacity)
+            }
+        }
+        .padding(.top, 1)
     }
 }
