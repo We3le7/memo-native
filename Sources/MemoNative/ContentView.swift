@@ -341,13 +341,13 @@ struct ContentView: View {
 
             // 一行承载：日期 + 优先级。文字优先，颜色只用于优先级圆点。
             HStack(spacing: 0) {
-                // 日期选择键已移除，只保留工期。
-                // 新事项固定记在今天；要改日期在行内直接点。
+                // 工期放在最左，且直接展开——不用先悬停再点。
+                // 它是这一行里最常调的东西，藏在悬停后面等于每次
+                // 都多一步；常驻反而更快，也让这一行有个自然的起点。
+                SpanField(span: $ui.span)
+                    .padding(.trailing, 10)
 
                 Spacer(minLength: 8)
-
-                SpanField(span: $ui.span)
-                    .padding(.trailing, 8)
 
                 // 优先级：四档并排，带文字与色块。
                 // 原来只有 17×17 的圆点，既难看清也难点中，这里整体放大。
@@ -360,17 +360,27 @@ struct ContentView: View {
 
     // MARK: 筛选
 
+    @Namespace private var filterIndicator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private var filterBar: some View {
         HStack(spacing: 0) {
-            // 分段控件读数比下划线更快：底色直接标出「当前在哪一档」
+            // 分段控件读数比下划线更快：底色直接标出「当前在哪一档」。
+            // 用 matchedGeometryEffect 让选中底块在档位之间滑动，
+            // 与右侧优先级选择器完全同一套手感——同一个界面里的
+            // 两个同构控件应该用同一种动效，否则会觉得哪里不对劲。
             HStack(spacing: 2) {
                 ForEach(ComposerState.Filter.allCases) { option in
-                    SegmentTab(
+                    FilterSegment(
                         title: option.rawValue,
-                        selected: ui.filter == option
+                        isSelected: ui.filter == option,
+                        indicatorNamespace: filterIndicator
                     ) {
-                        withAnimation(Theme.springSnappy) {
+                        guard ui.filter != option else { return }
+                        if reduceMotion {
                             ui.filter = option
+                        } else {
+                            withAnimation(Theme.springSnappy) { ui.filter = option }
                         }
                     }
                 }
@@ -722,10 +732,15 @@ private struct PrioritySegment: View {
 // MARK: - 分段标签（筛选）
 //
 // 比下划线更「可点」：选中有实心胶囊底，眼睛不用去追一根 1.5pt 的线。
-
-struct SegmentTab: View {
+/// 筛选档位：与 PrioritySegment 同一套结构与动效。
+///
+/// 右栏的优先级选择器、左栏的筛选器，是同一种控件（一排互斥档位）。
+/// 它们必须用同一种动效——底块从旧位置滑到新位置，而不是各自淡入淡出。
+/// 同一个界面里两个同构控件手感不同，会让人下意识觉得哪里不对。
+struct FilterSegment: View {
     let title: String
-    let selected: Bool
+    let isSelected: Bool
+    let indicatorNamespace: Namespace.ID
     let action: () -> Void
 
     @StateObject private var hover = HoverState()
@@ -738,31 +753,36 @@ struct SegmentTab: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 11.5, weight: selected ? .semibold : .regular))
+                .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
                 .foregroundStyle(
-                    selected ? Theme.ink
-                             : (hover.hovering ? Theme.inkSecondary : Theme.inkTertiary)
+                    isSelected ? Theme.ink
+                               : (hover.hovering ? Theme.inkSecondary : Theme.inkTertiary)
                 )
-                .padding(.horizontal, 11)
-                .padding(.vertical, 4.5)
-                .background(
-                    Capsule().fill(selected ? Theme.surfaceRaised : Color.clear)
-                )
-                .overlay(
-                    Capsule().strokeBorder(selected ? Theme.stroke : Color.clear, lineWidth: Theme.hairline)
-                )
-                .contentShape(Capsule())
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, 7)
+                .frame(height: 22)
+                .contentShape(Rectangle().inset(by: -3))
+                .background {
+                    if isSelected {
+                        Capsule()
+                            .fill(Theme.surfaceRaised)
+                            .overlay(
+                                Capsule().strokeBorder(Theme.stroke, lineWidth: 1)
+                            )
+                            .matchedGeometryEffect(id: "filterIndicator", in: indicatorNamespace)
+                    } else if hover.hovering {
+                        Capsule().fill(Theme.surfaceHover)
+                    }
+                }
         }
         .buttonStyle(.plain)
         .onHover { inside in
             withAnimation(Theme.easeFast) { hover.hovering = inside }
         }
-        .animation(Theme.springSnappy, value: selected)
+        .animation(Theme.springSnappy, value: isSelected)
     }
 }
-
-// MARK: - 日期步进器
-
 // MARK: - 分组头
 
 struct GroupHeader: View {
@@ -1233,77 +1253,82 @@ extension Notification.Name {
 /// 经常打不开（同样的坑在日期选择上已经踩过）。
 struct SpanField: View {
     @Binding var span: Int
-    @StateObject private var hover = HoverFlag()
 
     private static let presets = [1, 2, 3, 5, 7]
-    private var title: String { span <= 1 ? "当天" : "\(span) 天" }
 
     var body: some View {
-        // 同样不走系统菜单：改成点一下就地展开一排天数。
-        // 面板是 nonactivating panel，NSMenu 在这上面不可靠。
-        HStack(spacing: 3) {
-            if hover.on {
-                HStack(spacing: 1) {
-                    ForEach(Array(Self.presets.enumerated()), id: \.element) { index, d in
-                        Button {
-                            // 选中态用弹簧：色块"弹"到新的档位上，
-                            // 比线性过渡更像实物按钮被按下。
-                            withAnimation(.spring(response: 0.26, dampingFraction: 0.72)) {
-                                span = d
-                            }
-                        } label: {
-                            Text(d <= 1 ? "1" : "\(d)")
-                                .font(.system(size: 9.5, weight: span == d ? .semibold : .regular))
-                                .monospacedDigit()
-                                .foregroundStyle(span == d ? Theme.accent : Theme.inkSecondary)
-                                .frame(width: 15, height: 15)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                        .fill(span == d ? Theme.accent.opacity(0.16) : Color.clear)
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                        .strokeBorder(
-                                            span == d ? Theme.accent.opacity(0.5) : Color.clear,
-                                            lineWidth: 0.8
-                                        )
-                                )
-                                .scaleEffect(span == d ? 1.06 : 1.0)
-                        }
-                        .buttonStyle(SpanPressStyle())
-                        .help(d <= 1 ? "当天完成" : "\(d) 天")
-                        // 逐个展开：每个数字比前一个晚 28ms 出现，
-                        // 读起来是"一排按钮依次滑出"，而不是整块突然出现。
-                        .transition(
-                            .asymmetric(
-                                insertion: .opacity
-                                    .combined(with: .offset(x: 6))
-                                    .animation(.easeOut(duration: 0.16).delay(Double(index) * 0.028)),
-                                removal: .opacity.animation(.easeIn(duration: 0.08))
-                            )
-                        )
+        // 常驻展开，不用先悬停再点。
+        //
+        // 工期是这一行里最常调的东西，藏在悬停后面等于每次多一步；
+        // 五个数字常驻反而更快，也给这一行一个自然的起点。
+        // 面板是 nonactivating panel，系统菜单在这上面不可靠，
+        // 所以是自己画的一排按钮，不用 NSMenu。
+        HStack(spacing: 1) {
+            Image(systemName: "calendar.badge.clock")
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(Theme.inkTertiary)
+                .padding(.trailing, 3)
+
+            ForEach(Array(Self.presets.enumerated()), id: \.element) { index, d in
+                Button {
+                    // 选中态用弹簧：色块"弹"到新的档位上，
+                    // 比线性过渡更像实物按钮被按下。
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.72)) {
+                        span = d
                     }
+                } label: {
+                    Text("\(d)")
+                        .font(.system(size: 9.5, weight: span == d ? .semibold : .regular))
+                        .monospacedDigit()
+                        .foregroundStyle(span == d ? Theme.accent : Theme.inkSecondary)
+                        .frame(width: 15, height: 15)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(span == d ? Theme.accent.opacity(0.16) : Color.clear)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .strokeBorder(
+                                    span == d ? Theme.accent.opacity(0.5) : Color.clear,
+                                    lineWidth: 0.8
+                                )
+                        )
+                        .scaleEffect(span == d ? 1.06 : 1.0)
                 }
+                .buttonStyle(SpanPressStyle())
+                .help(d <= 1 ? "当天完成" : "\(d) 天")
+                // 首次出现时逐个滑入（每个晚 28ms），之后常驻不动。
+                // 这比"整块突然出现"更像一排控件被摆上桌。
+                .transition(
+                    .asymmetric(
+                        insertion: .opacity
+                            .combined(with: .offset(x: 6))
+                            .animation(.easeOut(duration: 0.16).delay(Double(index) * 0.028)),
+                        removal: .opacity.animation(.easeIn(duration: 0.08))
+                    )
+                )
             }
 
-            HStack(spacing: 4) {
-                Image(systemName: "calendar.badge.clock")
-                    .font(.system(size: 9.5, weight: .medium))
-                Text(title)
-                    .font(.system(size: 10.5, weight: .medium))
+            // 超出预设范围时补一个当前值，避免"选了 7 天以外"时看不到自己选了什么
+            if !Self.presets.contains(span) {
+                Text("\(span)")
+                    .font(.system(size: 9.5, weight: .semibold))
                     .monospacedDigit()
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 15, height: 15)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(Theme.accent.opacity(0.16))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .strokeBorder(Theme.accent.opacity(0.5), lineWidth: 0.8)
+                    )
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
             }
-            .foregroundStyle(hover.on ? Theme.ink : Theme.inkSecondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(hover.on ? Theme.surfaceHover : Theme.surface))
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.86), value: hover.on)
-        .onHover { hover.on = $0 }
-        .help("工期：这件事要占用几天")
     }
 }
-
 final class HoverFlag: ObservableObject {
     @Published var on = false
 }
