@@ -187,7 +187,7 @@ struct OrbView: View {
                                   weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(isAlerting ? Priority.urgent.tint : Color.primary.opacity(0.88))
-                    .contentTransition(.numericText())
+                    .contentTransition(.opacity)
 
                 // 有逾期时补一行极小提示，避免只看到数字不知道含义
                 if isAlerting {

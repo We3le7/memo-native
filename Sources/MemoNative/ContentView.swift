@@ -12,8 +12,6 @@ import Combine
 final class ComposerState: ObservableObject {
     @Published var draft: String = ""
     @Published var priority: Priority = .normal
-    @Published var dueMode: DueMode = .today
-    @Published var customDate: Date = Date()
     /// 新事项的工期（天）
     @Published var span: Int = 1
     @Published var filter: Filter = .all
@@ -25,23 +23,6 @@ final class ComposerState: ObservableObject {
     enum Filter: String, CaseIterable, Identifiable {
         case all = "全部", today = "今天", pending = "未完成", done = "已完成"
         var id: String { rawValue }
-    }
-
-    /// 日期不依赖系统 DatePicker 弹出层（非激活面板里点不开），改为显式选项。
-    enum DueMode: String, CaseIterable, Identifiable {
-        case today = "今天"
-        case tomorrow = "明天"
-        case pick = "选择日期"
-
-        var id: String { rawValue }
-
-        var offset: Int? {
-            switch self {
-            case .today: return 0
-            case .tomorrow: return 1
-            case .pick: return nil
-            }
-        }
     }
 
     private var toastToken = 0
@@ -86,11 +67,12 @@ final class ComposerState: ObservableObject {
         clockTask = nil
     }
 
+    /// 新事项的日期。
+    ///
+    /// 固定为今天：界面上已不再提供日期选择键（只保留工期）。
+    /// 想改日期可以在记下之后行内编辑，比录入时先选日期更顺手。
     var resolvedDueKey: String {
-        if let offset = dueMode.offset {
-            return UILogic.dueKey(offsetDays: offset)
-        }
-        return DateKey.string(from: customDate)
+        UILogic.dueKey(offsetDays: 0)
     }
 }
 
@@ -177,7 +159,6 @@ struct ContentView: View {
                 .allowsHitTesting(false)
         )
         .onAppear {
-            ui.customDate = Date()
             ui.startClock()
             inputFocused = true
         }
@@ -264,7 +245,7 @@ struct ContentView: View {
                 .font(.system(size: 10.5, weight: .medium, design: .rounded))
                 .foregroundStyle(Theme.inkSecondary)
                 .monospacedDigit()
-                .contentTransition(.numericText())
+                .contentTransition(.opacity)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
                 .background(Capsule().fill(Theme.surface))
@@ -360,24 +341,8 @@ struct ContentView: View {
 
             // 一行承载：日期 + 优先级。文字优先，颜色只用于优先级圆点。
             HStack(spacing: 0) {
-                HStack(spacing: 2) {
-                    ForEach(ComposerState.DueMode.allCases) { mode in
-                        QuietChip(
-                            title: mode.rawValue,
-                            selected: ui.dueMode == mode
-                        ) {
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                                ui.dueMode = mode
-                            }
-                        }
-                    }
-                }
-
-                if ui.dueMode == .pick {
-                    DayStepper(date: $ui.customDate)
-                        .padding(.leading, 6)
-                        .transition(.opacity.combined(with: .move(edge: .leading)))
-                }
+                // 日期选择键已移除，只保留工期。
+                // 新事项固定记在今天；要改日期在行内直接点。
 
                 Spacer(minLength: 8)
 
@@ -388,7 +353,6 @@ struct ContentView: View {
                 // 原来只有 17×17 的圆点，既难看清也难点中，这里整体放大。
                 PriorityPicker(selected: $ui.priority)
             }
-            .animation(.spring(response: 0.3, dampingFraction: 0.88), value: ui.dueMode)
         }
         .padding(.horizontal, Theme.gutter)
         .padding(.bottom, 14)
@@ -425,7 +389,7 @@ struct ContentView: View {
                 .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
                 .lineLimit(1)
-                .contentTransition(.numericText())
+                .contentTransition(.opacity)
         }
         .padding(.horizontal, Theme.gutter)
         .padding(.top, 2)
@@ -599,7 +563,6 @@ struct ContentView: View {
         withAnimation(.spring(response: 0.36, dampingFraction: 0.84)) {
             _ = store.add(title: text, priority: ui.priority, dueDate: dueKey, span: ui.span)
             ui.draft = ""
-            ui.dueMode = .today
             // 工期不重置：连续录入同类事项时，通常还是同样的工期
             
         }
@@ -651,38 +614,6 @@ struct IconGlyph: View {
 }
 
 // MARK: - 安静的文字选项（日期）
-
-struct QuietChip: View {
-    let title: String
-    let selected: Bool
-    let action: () -> Void
-
-    @StateObject private var hover = HoverState()
-
-    @MainActor
-    final class HoverState: ObservableObject {
-        @Published var hovering = false
-    }
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11, weight: selected ? .medium : .regular))
-                .foregroundStyle(selected ? Color.primary : (hover.hovering ? Color.secondary : Theme.inkTertiary))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(selected ? Color.primary.opacity(0.07) : Color.clear)
-                )
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { inside in
-            withAnimation(.easeOut(duration: 0.13)) { hover.hovering = inside }
-        }
-    }
-}
 
 // MARK: - 优先级选择器
 //
@@ -831,54 +762,6 @@ struct SegmentTab: View {
 }
 
 // MARK: - 日期步进器
-
-struct DayStepper: View {
-    @Binding var date: Date
-
-    var body: some View {
-        HStack(spacing: 0) {
-            step("chevron.left") { shift(-1) }
-
-            Text(displayText)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .monospacedDigit()
-                .frame(minWidth: 38)
-                .contentTransition(.numericText())
-
-            step("chevron.right") { shift(1) }
-        }
-        .padding(.horizontal, 1)
-        .padding(.vertical, 2)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.primary.opacity(0.045))
-        )
-    }
-
-    private var displayText: String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "M/d"
-        return f.string(from: date)
-    }
-
-    private func shift(_ days: Int) {
-        withAnimation(.easeOut(duration: 0.18)) {
-            date = Calendar.current.date(byAdding: .day, value: days, to: date) ?? date
-        }
-    }
-
-    private func step(_ system: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: system)
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(Theme.inkTertiary)
-                .frame(width: 15, height: 15)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
 
 // MARK: - 分组头
 
@@ -1361,9 +1244,13 @@ struct SpanField: View {
         HStack(spacing: 3) {
             if hover.on {
                 HStack(spacing: 1) {
-                    ForEach(Self.presets, id: \.self) { d in
+                    ForEach(Array(Self.presets.enumerated()), id: \.element) { index, d in
                         Button {
-                            span = d
+                            // 选中态用弹簧：色块"弹"到新的档位上，
+                            // 比线性过渡更像实物按钮被按下。
+                            withAnimation(.spring(response: 0.26, dampingFraction: 0.72)) {
+                                span = d
+                            }
                         } label: {
                             Text(d <= 1 ? "1" : "\(d)")
                                 .font(.system(size: 9.5, weight: span == d ? .semibold : .regular))
@@ -1374,12 +1261,29 @@ struct SpanField: View {
                                     RoundedRectangle(cornerRadius: 4, style: .continuous)
                                         .fill(span == d ? Theme.accent.opacity(0.16) : Color.clear)
                                 )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                        .strokeBorder(
+                                            span == d ? Theme.accent.opacity(0.5) : Color.clear,
+                                            lineWidth: 0.8
+                                        )
+                                )
+                                .scaleEffect(span == d ? 1.06 : 1.0)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(SpanPressStyle())
                         .help(d <= 1 ? "当天完成" : "\(d) 天")
+                        // 逐个展开：每个数字比前一个晚 28ms 出现，
+                        // 读起来是"一排按钮依次滑出"，而不是整块突然出现。
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity
+                                    .combined(with: .offset(x: 6))
+                                    .animation(.easeOut(duration: 0.16).delay(Double(index) * 0.028)),
+                                removal: .opacity.animation(.easeIn(duration: 0.08))
+                            )
+                        )
                     }
                 }
-                .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .trailing)))
             }
 
             HStack(spacing: 4) {
@@ -1394,7 +1298,7 @@ struct SpanField: View {
             .padding(.vertical, 3)
             .background(Capsule().fill(hover.on ? Theme.surfaceHover : Theme.surface))
         }
-        .animation(.easeOut(duration: 0.14), value: hover.on)
+        .animation(.spring(response: 0.3, dampingFraction: 0.86), value: hover.on)
         .onHover { hover.on = $0 }
         .help("工期：这件事要占用几天")
     }
@@ -1402,4 +1306,16 @@ struct SpanField: View {
 
 final class HoverFlag: ObservableObject {
     @Published var on = false
+}
+
+/// 工期数字的按压反馈：按下时轻微下沉，松开回弹。
+///
+/// 15pt 的方块太小，光靠颜色变化反馈不够明确；
+/// 这点位移让人确信"点到了"。
+struct SpanPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.88 : 1.0)
+            .animation(.spring(response: 0.22, dampingFraction: 0.6), value: configuration.isPressed)
+    }
 }

@@ -425,6 +425,7 @@ struct TimeField: View {
 /// 所以这里补上档位名，并在两端加了图标，让用户不用试错就能定位。
 struct GlassStrengthField: View {
     @Binding var strength: Double
+    @StateObject private var hover = HoverFlag()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -432,6 +433,8 @@ struct GlassStrengthField: View {
                 Image(systemName: "circle.dotted")
                     .font(.system(size: 10.5))
                     .foregroundStyle(Theme.inkTertiary)
+                    .scaleEffect(hover.on ? 1.12 : 1.0)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.6), value: hover.on)
 
                 Slider(value: $strength, in: 0...1)
                     .controlSize(.small)
@@ -440,15 +443,39 @@ struct GlassStrengthField: View {
                 Image(systemName: "circle.hexagongrid")
                     .font(.system(size: 10.5))
                     .foregroundStyle(Theme.inkTertiary)
+                    .scaleEffect(hover.on ? 1.12 : 1.0)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.6), value: hover.on)
 
+                // 档位名跟着滑块连续变化，用弹簧让它"追"上来而不是硬切，
+                // 拖动时读起来是一串连续的字，不是一帧一帧地跳。
                 Text(GlassAppearance.label(for: strength))
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(Theme.inkSecondary)
                     .frame(width: 58, alignment: .trailing)
+                    // 不用 .contentTransition(.numericText())：那是 macOS 14+，
+                    // 而部署目标是 13.0。新 SDK 下能编译，但运行时会崩。
+                    // .opacity 在 13.0 可用，配合 animation 的淡入淡出够了。
                     .contentTransition(.opacity)
+                    .animation(.easeOut(duration: 0.12), value: strength)
             }
+
+            // 底部细进度条：补足系统 Slider 在小尺寸下看不清当前位置的问题。
+            // 宽度直接跟 strength 走，拖动时是一条连续的带子在伸长。
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Theme.stroke.opacity(0.6))
+                    Capsule()
+                        .fill(Theme.accent.opacity(hover.on ? 0.85 : 0.55))
+                        .frame(width: max(3, geo.size.width * strength))
+                }
+            }
+            .frame(height: 2.5)
+            .padding(.horizontal, 18)
+            .animation(.easeOut(duration: 0.12), value: strength)
         }
         .padding(.top, 1)
+        .onHover { hover.on = $0 }
     }
 }
 

@@ -28,6 +28,7 @@ testSpan()
     testGraceResignDeferred()
     testPriorityDotHitArea()
     testPriorityDotIsCapsule()
+    testNewMemoDefaultsToToday()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -807,6 +808,32 @@ func testPriorityDotIsCapsule() {
     // 宽度超过命中帧就等于命中区受限了
     check(w <= UILogic.dotHitFrame,
           "胶囊宽度不能超过命中帧，否则点不全")
+}
+
+@MainActor
+
+
+/// 新事项固定记在今天。
+///
+/// 界面上已去掉日期选择键（「今天 / 明天 / 选择日期」），
+/// 只保留工期。想改日期在记下之后行内编辑。
+///
+/// 这条测试锁的是"没有日期选择也要有确定的默认值"——
+/// 否则一旦哪天删错了，新事项会落在一个空日期上。
+func testNewMemoDefaultsToToday() {
+    let key = UILogic.dueKey(offsetDays: 0)
+    check(key.count == 10, "日期键应是 yyyy-MM-dd 格式")
+    check(key.hasPrefix("\(Calendar.current.component(.year, from: Date()))"),
+          "默认日期应落在今年")
+
+    // offset 0 必须就是今天
+    let today = DateKey.string(from: Date())
+    check(key == today, "offset 0 应等于今天（\(key) vs \(today)）")
+
+    // 顺带确认相邻日期是连续的，避免跨月边界出错
+    let tomorrow = UILogic.dueKey(offsetDays: 1)
+    check(tomorrow != key, "明天不该等于今天")
+    check(tomorrow > key, "yyyy-MM-dd 字典序应与时间序一致")
 }
 
 @MainActor
