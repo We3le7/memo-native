@@ -1,0 +1,17 @@
+# 构建产物
+build/
+*.app/
+modulecache/
+
+# macOS
+.DS_Store
+._*
+
+# Xcode（本项目实际不用 Xcode，但避免误提交）
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+
+# 编辑器
+.vscode/
+.idea/
