@@ -294,19 +294,15 @@ struct ContentView: View {
             //   · 文字独占中间，两侧只放最必要的
             //   · 回车提示改成独立胶囊，像真的键帽；只在有内容时才亮
             HStack(spacing: 10) {
-                ZStack {
-                    Circle()
-                        .fill(inputFocused ? Theme.accent : Color.clear)
-                        .frame(width: 19, height: 19)
-
-                    Image(systemName: "pencil.line")
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(inputFocused ? Color.white : Theme.inkQuaternary)
-                }
-                .frame(width: 19, height: 19)
-                // 聚焦时轻轻弹一下，给出"可以打字了"的即时反馈
-                .scaleEffect(inputFocused ? 1.0 : 0.94)
-                .animation(Theme.springBouncy, value: inputFocused)
+                // 图标只用文字色阶，不加色块。
+                // 输入框里唯一的"颜色"就是用户打的字，其余都该退到背后。
+                Image(systemName: "pencil.line")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(inputFocused ? Theme.inkSecondary : Theme.inkQuaternary)
+                    .frame(width: 17, height: 19)
+                    // 聚焦时轻轻弹一下，给出"可以打字了"的即时反馈
+                    .scaleEffect(inputFocused ? 1.0 : 0.94)
+                    .animation(Theme.springBouncy, value: inputFocused)
 
                 TextField("记点什么…", text: $ui.draft)
                     .textFieldStyle(.plain)
@@ -336,20 +332,20 @@ struct ContentView: View {
                 Text("↵")
                     .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                     .foregroundStyle(
-                        inputFocused && !ui.draft.isEmpty ? Theme.accent : Theme.inkQuaternary
+                        inputFocused && !ui.draft.isEmpty ? Theme.inkSecondary : Theme.inkQuaternary
                     )
                     .frame(width: 19, height: 19)
                     .background(
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
                             .fill(inputFocused && !ui.draft.isEmpty
-                                  ? Theme.accent.opacity(0.13)
+                                  ? Theme.selectionFill
                                   : Theme.surfaceHover)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
                             .strokeBorder(
                                 inputFocused && !ui.draft.isEmpty
-                                    ? Theme.accent.opacity(0.30)
+                                    ? Theme.selectionStroke
                                     : Color.clear,
                                 lineWidth: 0.8
                             )
@@ -364,16 +360,16 @@ struct ContentView: View {
                     .fill(inputFocused ? Theme.surfaceRaised : Theme.surface)
             )
             .overlay(
-                // 聚焦描边收细：紫色比蓝色更"重"，同样的 1.2pt 会显闷，
-                // 这里降到 1.0 并降低不透明度。
+                // 聚焦靠"描边加深 + 底色抬起"，不靠染色。
+                // 输入框里唯一该有颜色的是文字本身。
                 RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
                     .strokeBorder(
-                        inputFocused ? Theme.accent.opacity(0.40) : Theme.stroke,
+                        inputFocused ? Theme.inkQuaternary : Theme.stroke,
                         lineWidth: inputFocused ? 1.0 : Theme.hairline
                     )
             )
             .shadow(
-                color: inputFocused ? Theme.accent.opacity(0.10) : .black.opacity(0.05),
+                color: .black.opacity(inputFocused ? 0.07 : 0.05),
                 radius: inputFocused ? 8 : 4,
                 y: inputFocused ? 2 : 1
             )
@@ -1354,9 +1350,13 @@ private struct SpanSegment: View {
         @Published var pressed = false
     }
 
-    /// 全用强调色而不像优先级那样每档一色：
-    /// 工期是同一件事的连续取值，不是四种性质不同的类别。
-    private var tint: Color { Theme.accent }
+    /// 工期选择器整体走中性色，不引入色相。
+    ///
+    /// 理由：它和输入框是同一件事的两半——都是"这条事项是什么"，
+    /// 而不是"这条事项有多急"。优先级必须用颜色区分四档，
+    /// 工期只是同一个值的几个常见档位，染色反而抢注意力。
+    /// 选中由底块 + 描边 + 加粗表达，够了。
+    private var tint: Color { Theme.ink }
 
     private var label: String { days <= 1 ? "当天" : "\(days) 天" }
 
@@ -1365,12 +1365,12 @@ private struct SpanSegment: View {
             HStack(spacing: 4) {
                 // 圆点与优先级同位同尺寸，保持两排节奏一致
                 Circle()
-                    .fill(tint.opacity(isSelected ? 1.0 : 0.80))
+                    .fill(isSelected ? tint : Theme.inkTertiary)
                     .frame(width: isSelected ? 6.5 : 5.5, height: isSelected ? 6.5 : 5.5)
 
                 Text(label)
                     .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
-                    .foregroundStyle(isSelected ? tint : tint.opacity(0.88))
+                    .foregroundStyle(isSelected ? tint : Theme.inkSecondary)
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -1380,9 +1380,9 @@ private struct SpanSegment: View {
             .background {
                 if isSelected {
                     Capsule()
-                        .fill(Theme.accentFill)
+                        .fill(Theme.selectionFill)
                         .overlay(
-                            Capsule().strokeBorder(Theme.accentStroke, lineWidth: 1)
+                            Capsule().strokeBorder(Theme.selectionStroke, lineWidth: 1)
                         )
                         .matchedGeometryEffect(id: "spanIndicator", in: indicatorNamespace)
                 } else if hover.hovering {

@@ -51,31 +51,16 @@ enum Theme {
             : NSColor(srgbRed: 0.035, green: 0.424, blue: 0.290, alpha: 1)
     })
 
-    /// 选中底块：深色背景上淡填充几乎不可见，直接给两套颜色。
+    /// 中性选中态：用文字色本身做底，不引入色相。
     ///
-    /// 不用「一个不透明度常量」：那样只在启动时求值一次，
-    /// 用户切换浅色/深色外观后不会更新，底块会停在旧值上。
-    /// 用动态 Color 才能跟着外观实时变。
-    static let accentFill = Color(nsColor: NSColor(name: nil) { appearance in
-        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let rgb: (Double, Double, Double) = isDark
-            ? (0.204, 0.827, 0.600)   // 深色：亮绿
-            : (0.035, 0.424, 0.290)   // 浅色：深绿
-        return NSColor(srgbRed: rgb.0, green: rgb.1, blue: rgb.2,
-                       alpha: isDark ? 0.22 : 0.16)
-    })
-
-    /// 选中底块的描边，比填充更实一点，负责勾出边界。
-    static let accentStroke = Color(nsColor: NSColor(name: nil) { appearance in
-        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let rgb: (Double, Double, Double) = isDark
-            ? (0.204, 0.827, 0.600)
-            : (0.035, 0.424, 0.290)
-        // 75% 才能让描边在两种外观下都超过 3.0：
-        // 深色 4.04 / 浅色 3.52。低于这个值边界就糊了。
-        return NSColor(srgbRed: rgb.0, green: rgb.1, blue: rgb.2,
-                       alpha: 0.75)
-    })
+    /// 输入框和工期选择器都走这一套——它们是"文字的一部分"，
+    /// 染色反而会把注意力从用户输入的内容上挪开。
+    /// 优先级选择器不同：那四档是有语义的，必须用颜色区分。
+    /// 填充只需给出"这一块被选中"的区域感；边界靠描边。
+    /// 描边取 40%：浅色 2.82 / 深色 3.78，能勾出轮廓但不抢文字。
+    /// （22% 时只有 1.68 / 2.05，边界会糊。）
+    static let selectionFill = Color.primary.opacity(0.12)
+    static let selectionStroke = Color.primary.opacity(0.40)
 
     // 表面层次：从平面到抬起
     static let surface = Color.primary.opacity(0.045)
