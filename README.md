@@ -205,19 +205,27 @@ frameView.layer?.masksToBounds = true
 
 淡出由 SwiftUI 的 `opacity` 负责，**窗口 alpha 恒为 1**。这里踩过坑：一开始用 `NSWindow.animator().alphaValue` 做窗口级淡出，结果球再也不回来——实测把 alpha 设回 1 之后 0.35 秒仍是 0，窗口级 alpha 动画被打断后会停在终值且不再响应赋值。
 
-### 切换桌面时必须收敛状态
+### 跨桌面保持一致
 
-三个窗口都带 `.canJoinAllSpaces`，会跟着用户出现在每个桌面。但"展开/折叠"这个状态机只在 `show()` / `hide()` 里推进，Space 切换不会触发它们。
+三个窗口都带 `.canJoinAllSpaces`，会跟着用户出现在每个桌面。
 
-结果是状态错位：在桌面 A 展开面板（球被吸入隐藏），切到桌面 B 时面板跟过来了、球却还是透明的——用户看到"只有面板没有球"。反过来在 B 折叠，回到 A 面板又还在。
+**面板跨桌面保持展开是正确的**——召唤出来的东西不该因为切个桌面就消失。
 
-修法是监听 `NSWorkspace.activeSpaceDidChangeNotification`，切走时把面板收起、球放出来。Space 不是工作单元的边界，切走就该收工，回来重新召唤。
+真正会出问题的只有球的显隐：它由 `show()` / `hide()` 推进，Space 切换不经过那两个方法，图层可能停在半透明，于是出现"面板在、球也在"或"面板不在、球也不在"的错位。
 
-判断逻辑抽成 `UILogic.shouldCollapseOnSpaceChange`，有 8 种输入组合的穷举测试——只有「面板可见 + 没在收起 + 设置页没开」这一种才该触发。
+所以 Space 切换只做一致性校正，不动面板：
 
-设置页开着时不收：用户可能正调参数、切桌面是想对比效果。
+```swift
+FloatingOrb.shared.syncVisibilityToPanel(panelVisible: panel.isVisible)
+```
 
-### 面板不带阴影
+`syncVisibilityToPanel` 不播动画、不走状态机，只把图层摆到终点状态：面板展开就让球藏起来，面板收起就让球露出来。
+
+判断逻辑抽成 `UILogic.shouldSyncOrbOnSpaceChange`，唯一跳过的情况是"正在播动画"——那时插手会和动画抢同一个属性。
+
+**一个踩过的弯路**：最初的理解是"切走就该收起"，监听通知后面板一换桌面就消失。方向反了——用户要的是跟随，不是清场。
+
+### 面板不带阴影### 面板不带阴影
 
 面板既不用系统阴影，也不自己画阴影。
 

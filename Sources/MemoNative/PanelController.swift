@@ -403,35 +403,32 @@ final class PanelController {
             }
         })
 
-        // 切换桌面（Space）→ 状态必须收敛到"面板收起、球可见"。
+        // 切换桌面（Space）→ 面板保持展开，只把球的可视状态同步过来。
         //
         // 三个窗口都带 .canJoinAllSpaces，会跟着用户出现在每个桌面。
-        // 但"展开/折叠"这个状态机只在 show()/hide() 里推进：
-        // 在桌面 A 展开面板（球被吸入隐藏），切到桌面 B 时面板跟过来了、
-        // 球却是透明的——用户看到的是"只有面板没有球"。
-        // 反过来在 B 折叠，回到 A 面板又还在。
+        // 面板的行为是对的：召唤出来的面板应当跟着你走，切个桌面不该消失。
         //
-        // Space 不是工作单元的边界，切走就该收工，回来重新召唤。
+        // 但"球的显隐"这个状态机只在 show()/hide() 里推进，Space 切换
+        // 不经过它们，于是可能出现球的图层停在半透明、和面板状态对不上。
+        // 这里只做一致性校正：面板可见就让球保持"被吸入"，面板不可见就让它露出来。
         observers.append(WorkspaceWatcher.shared.onSpaceChange { [weak self] in
             guard let self, let panel = self.panel else { return }
-            guard UILogic.shouldCollapseOnSpaceChange(
+            guard UILogic.shouldSyncOrbOnSpaceChange(
                 isPanelVisible: panel.isVisible,
-                isHiding: self.isHiding,
-                isSettingsOpen: SettingsWindowController.shared.isVisible
+                isHiding: self.isHiding
             ) else { return }
-            self.hide(restoreFocus: false)
+            FloatingOrb.shared.syncVisibilityToPanel(panelVisible: panel.isVisible)
         })
     }
 
-    /// 诊断：在 App 内部触发一次"切桌面"逻辑，用于验证收敛行为。
+    /// 诊断：在 App 内部触发一次"切桌面"逻辑，用于验证同步行为。
     func simulateSpaceChangeForTesting() {
         guard let panel else { return }
-        let should = UILogic.shouldCollapseOnSpaceChange(
+        guard UILogic.shouldSyncOrbOnSpaceChange(
             isPanelVisible: panel.isVisible,
-            isHiding: isHiding,
-            isSettingsOpen: SettingsWindowController.shared.isVisible
-        )
-        if should { hide(restoreFocus: false) }
+            isHiding: isHiding
+        ) else { return }
+        FloatingOrb.shared.syncVisibilityToPanel(panelVisible: panel.isVisible)
     }
 
     private func installEscapeMonitor() {

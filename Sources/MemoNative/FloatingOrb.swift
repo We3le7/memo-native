@@ -346,6 +346,28 @@ final class FloatingOrb {
         }
     }
 
+    /// 把球的可视状态校正到与面板一致。
+    ///
+    /// 不播动画、不走 show()/hide() 那套状态机，只把图层摆到正确的终点状态。
+    /// 用于切桌面这类"状态机没经过、但视觉必须对得上"的场合。
+    ///
+    /// - Parameter panelVisible: 面板是否展开着。展开时球该藏起来，收起时该露出来。
+    func syncVisibilityToPanel(panelVisible: Bool) {
+        guard let panel, let layer = panel.contentView?.layer else { return }
+        layer.removeAnimation(forKey: "absorbScale")
+        layer.removeAnimation(forKey: "absorbFade")
+        layer.transform = CATransform3DIdentity
+        // 窗口 alpha 恒为 1，显隐只靠图层——这是为了避免
+        // 窗口级 alpha 动画被打断后停在终值、球再也回不来的老问题。
+        panel.alphaValue = 1
+        layer.opacity = panelVisible ? 0 : 1
+        hoverState?.collapse = panelVisible ? 1 : 0
+        panel.ignoresMouseEvents = panelVisible
+        if !panelVisible, !panel.isVisible {
+            panel.orderFront(nil)
+        }
+    }
+
     /// 让球从"几乎不可见"的状态开始浮现，供面板收起时同步调用。
     ///
     /// 和 endAbsorb 的区别：这个不 orderFront、不动窗口尺寸，

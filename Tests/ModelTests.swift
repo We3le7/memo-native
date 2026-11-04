@@ -20,7 +20,7 @@ testSpan()
     testOrbStateResets()
     testUnfoldAnchor()
     testFoldIsInverseOfUnfold()
-    testSpaceChangeCollapse()
+    testSpaceChangeSyncOrb()
     testPriorityBreakdown()
 
 // 1. 排序：日期 → 完成态 → 优先级
@@ -401,55 +401,41 @@ func testFoldIsInverseOfUnfold() {
 @MainActor
 
 
-/// 切换桌面时的状态收敛。
+/// 切换桌面时的状态同步。
 ///
-/// 这里的不变量是：切走之后，"面板是否可见"和"球是否可见"必须一致。
-/// 不收敛的话会出现三种错位：
-///   - 面板跟到新桌面，球却是透明的（只剩一个浮窗没有球）
-///   - 球留在旧桌面，面板跟过来了
-///   - 反复切换后状态越来越乱
-func testSpaceChangeCollapse() {
-    // 正常展开状态：该收
-    check(UILogic.shouldCollapseOnSpaceChange(
-        isPanelVisible: true, isHiding: false, isSettingsOpen: false
-    ), "面板展开时切桌面应收起")
+/// 不变量：面板跨桌面保持展开——召唤出来的东西不该因为切个桌面就消失。
+/// 需要校正的只有球的显隐：它由 show()/hide() 推进，
+/// Space 切换不经过那两个方法，图层可能停在半透明、和面板对不上。
+func testSpaceChangeSyncOrb() {
+    // 面板展开着：要同步（让球藏起来）
+    check(UILogic.shouldSyncOrbOnSpaceChange(
+        isPanelVisible: true, isHiding: false
+    ), "面板展开时切桌面应同步球的显隐")
 
-    // 正在收：不该叠加第二次
-    check(!UILogic.shouldCollapseOnSpaceChange(
-        isPanelVisible: true, isHiding: true, isSettingsOpen: false
-    ), "正在收起时不该重复触发")
+    // 面板收起：也要同步（让球露出来）
+    check(UILogic.shouldSyncOrbOnSpaceChange(
+        isPanelVisible: false, isHiding: false
+    ), "面板收起时切桌面也应同步")
 
-    // 已经收起：没什么可收
-    check(!UILogic.shouldCollapseOnSpaceChange(
-        isPanelVisible: false, isHiding: false, isSettingsOpen: false
-    ), "面板没显示时不该处理")
+    // 正在播动画：不要插手，会和动画抢同一个属性
+    check(!UILogic.shouldSyncOrbOnSpaceChange(
+        isPanelVisible: true, isHiding: true
+    ), "正在收起时不该同步")
+    check(!UILogic.shouldSyncOrbOnSpaceChange(
+        isPanelVisible: false, isHiding: true
+    ), "正在收起时不该同步（面板不可见）")
 
-    // 设置页开着：用户在调参数，切桌面可能是想对比效果
-    check(!UILogic.shouldCollapseOnSpaceChange(
-        isPanelVisible: true, isHiding: false, isSettingsOpen: true
-    ), "设置页开着时不该收起面板")
-
-    // 设置页开着且正在收：同样不处理
-    check(!UILogic.shouldCollapseOnSpaceChange(
-        isPanelVisible: true, isHiding: true, isSettingsOpen: true
-    ), "设置页开着且正在收时不处理")
-
-    // 穷举所有组合：结果必须只由三个输入决定，不能有意外
-    var collapsed = 0
+    // 穷举：唯一不该同步的只有"正在播动画"
+    var skipped = 0
     for vis in [true, false] {
         for hiding in [true, false] {
-            for settings in [true, false] {
-                let r = UILogic.shouldCollapseOnSpaceChange(
-                    isPanelVisible: vis, isHiding: hiding, isSettingsOpen: settings)
-                if r { collapsed += 1 }
-                // 只有"可见 + 没在收 + 设置没开"这一种组合该收
-                let expected = vis && !hiding && !settings
-                check(r == expected,
-                      "组合 vis=\(vis) hiding=\(hiding) settings=\(settings) 判断错误")
-            }
+            let r = UILogic.shouldSyncOrbOnSpaceChange(
+                isPanelVisible: vis, isHiding: hiding)
+            if !r { skipped += 1 }
+            check(r == !hiding, "组合 vis=\(vis) hiding=\(hiding) 判断错误")
         }
     }
-    check(collapsed == 1, "8 种组合里只有 1 种应该触发收起")
+    check(skipped == 2, "4 种组合里只有正在播动画的 2 种该跳过")
 }
 
 @MainActor

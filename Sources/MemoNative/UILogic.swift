@@ -132,29 +132,25 @@ struct PriorityBreakdown: Equatable {
 // MARK: - 桌面切换时的状态收敛
 
 extension UILogic {
-    /// 切换桌面时，面板该不该收起。
+    /// 切换桌面时，要不要同步一次球的显隐。
     ///
-    /// 三个窗口都带 .canJoinAllSpaces，会跟着用户出现在每个桌面；
-    /// 但"展开/折叠"这个状态机只在 show()/hide() 里推进。
-    /// 切走时如果不收敛，就会出现"面板跟过来了、球却是透明的"——
-    /// 或者"球在 A 桌面、面板在 B 桌面"这种彻底对不上的状态。
+    /// 三个窗口都带 .canJoinAllSpaces，会跟着用户出现在每个桌面，
+    /// 面板跨桌面保持展开是正确的行为——召唤出来的东西不该因为切个桌面就消失。
+    ///
+    /// 需要校正的只有球的显隐：它由 show()/hide() 推进，
+    /// Space 切换不经过那两个方法，图层可能停在半透明，和面板对不上。
     ///
     /// - Parameters:
     ///   - isPanelVisible: 面板窗口当前是否可见
     ///   - isHiding: 是否正在播收起动画
-    ///   - isSettingsOpen: 设置窗口是否开着
-    static func shouldCollapseOnSpaceChange(
+    static func shouldSyncOrbOnSpaceChange(
         isPanelVisible: Bool,
-        isHiding: Bool,
-        isSettingsOpen: Bool
+        isHiding: Bool
     ) -> Bool {
-        // 已经在收，别叠加一次
+        // 正在播动画时不要去改，会和动画抢同一个属性
         guard !isHiding else { return false }
-        // 本来就没展开，没什么可收的
-        guard isPanelVisible else { return false }
-        // 设置页是独立窗口，用户可能正在调参数，
-        // 此时切桌面多半是想对比效果，不该把面板也收掉
-        guard !isSettingsOpen else { return false }
+        // 面板是否可见都值得校正一次：可见→球该藏，不可见→球该现
+        _ = isPanelVisible
         return true
     }
 }
