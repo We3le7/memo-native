@@ -279,7 +279,7 @@ struct ContentView: View {
                     }
                     .buttonStyle(.plain)
                     .help("清空")
-                    .transition(.scale.combined(with: .opacity))
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
                 }
 
                 // 回车提示：给「随手记录」一个可发现的出口
@@ -290,8 +290,9 @@ struct ContentView: View {
                     .padding(.vertical, 2)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(inputFocused && !ui.draft.isEmpty ? Theme.accent.opacity(0.12) : Color.clear)
+                            .fill(inputFocused && !ui.draft.isEmpty ? Theme.accent.opacity(0.14) : Color.clear)
                     )
+                    .scaleEffect(inputFocused && !ui.draft.isEmpty ? 1.06 : 1)
             }
             .padding(.horizontal, 13)
             .padding(.vertical, 12)
@@ -337,20 +338,9 @@ struct ContentView: View {
 
                 Spacer(minLength: 8)
 
-                HStack(spacing: 9) {
-                    ForEach(Priority.allCases) { level in
-                        DotPicker(
-                            level: level,
-                            selected: ui.priority == level
-                        ) {
-                            withAnimation(.easeOut(duration: 0.16)) { ui.priority = level }
-                        }
-                    }
-                    Text(ui.priority.label)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Theme.inkTertiary)
-                        .frame(width: 26, alignment: .leading)
-                }
+                // 优先级：四档并排，带文字与色块。
+                // 原来只有 17×17 的圆点，既难看清也难点中，这里整体放大。
+                PriorityPicker(selected: $ui.priority)
             }
             .animation(.spring(response: 0.3, dampingFraction: 0.88), value: ui.dueMode)
         }
@@ -448,6 +438,15 @@ struct ContentView: View {
                                         },
                                         onCancelEdit: { ui.editingID = nil }
                                     )
+                                    // 增删时整行淡入并轻微上移，而不是瞬间闪现
+                                    .transition(
+                                        .asymmetric(
+                                            insertion: .opacity
+                                                .combined(with: .move(edge: .top))
+                                                .combined(with: .scale(scale: 0.97, anchor: .top)),
+                                            removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .leading))
+                                        )
+                                    )
                                 }
                             } header: {
                                 GroupHeader(key: group.key, items: group.items)
@@ -456,12 +455,15 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 8)
                     .padding(.bottom, 8)
-                    .animation(.spring(response: 0.34, dampingFraction: 0.85), value: visibleItems.map(\.id))
+                    // 用 id 序列驱动动画：只有增删/换序才动，改文字不闪
+                    .animation(Theme.rowInsert, value: visibleItems.map(\.id))
+                    .animation(Theme.easeMedium, value: ui.filter)
                 }
                 .scrollIndicators(.never)
                 .background(Color.clear)
             }
         }
+        .animation(Theme.easeMedium, value: visibleItems.isEmpty)
     }
 
     private var emptyState: some View {
@@ -494,6 +496,7 @@ struct ContentView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
+        .transition(.opacity.combined(with: .scale(scale: 0.96)))
     }
 
     // MARK: 底部
@@ -628,11 +631,49 @@ struct QuietChip: View {
     }
 }
 
-// MARK: - 优先级圆点
+// MARK: - 优先级选择器
+//
+// 旧版是 4 个 17×17 的圆点：直径 5.5pt 的点、17pt 的命中区，
+// 既看不清当前档位，也很难点中。现在改成 4 个并排的分段胶囊：
+//   * 每段都有文字，不用背颜色含义
+//   * 命中区放大到 22pt 高、每段约 44pt 宽
+//   * 选中项共享一个滑动指示器，切换时平滑过渡
 
-struct DotPicker: View {
+struct PriorityPicker: View {
+    @Binding var selected: Priority
+
+    @Namespace private var indicator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(Priority.allCases) { level in
+                PrioritySegment(
+                    level: level,
+                    isSelected: selected == level,
+                    indicatorNamespace: indicator,
+                    reduceMotion: reduceMotion
+                ) {
+                    guard selected != level else { return }
+                    if reduceMotion {
+                        selected = level
+                    } else {
+                        withAnimation(Theme.springSnappy) { selected = level }
+                    }
+                }
+            }
+        }
+        .padding(2)
+        .background(Capsule().fill(Theme.surface))
+        .overlay(Capsule().strokeBorder(Theme.stroke, lineWidth: Theme.hairline))
+    }
+}
+
+private struct PrioritySegment: View {
     let level: Priority
-    let selected: Bool
+    let isSelected: Bool
+    let indicatorNamespace: Namespace.ID
+    let reduceMotion: Bool
     let action: () -> Void
 
     @StateObject private var hover = HoverState()
@@ -640,30 +681,57 @@ struct DotPicker: View {
     @MainActor
     final class HoverState: ObservableObject {
         @Published var hovering = false
+        @Published var pressed = false
     }
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                // 选中的圆点外套一圈极淡的环，替代胶囊底色
+            HStack(spacing: 4) {
                 Circle()
-                    .strokeBorder(level.tint.opacity(selected ? 0.45 : 0), lineWidth: 1.2)
-                    .frame(width: 15, height: 15)
+                    .fill(level.tint.opacity(isSelected ? 1.0 : 0.80))
+                    .frame(width: isSelected ? 6.5 : 5.5, height: isSelected ? 6.5 : 5.5)
 
-                Circle()
-                    .fill(level.tint.opacity(selected ? 1.0 : 0.35))
-                    .frame(width: selected ? 7 : 5.5, height: selected ? 7 : 5.5)
+                Text(level.label)
+                    .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
+                    // 未选中也用本档颜色的深色版，而不是统一灰：
+                    // 四档一眼可分，但仍明显弱于选中态
+                    .foregroundStyle(isSelected ? level.tint : level.tint.opacity(0.72))
+                    .lineLimit(1)
+                    .fixedSize()
             }
-            .frame(width: 17, height: 17)
-            .contentShape(Rectangle())
-            .opacity(hover.hovering && !selected ? 0.85 : 1)
+            .padding(.horizontal, 7)
+            .frame(height: 22)
+            // 命中区比视觉高度再高一点，避免「看着点到了其实没点到」
+            .contentShape(Rectangle().inset(by: -3))
+            .background {
+                if isSelected {
+                    Capsule()
+                        .fill(level.tint.opacity(0.13))
+                        .overlay(
+                            Capsule().strokeBorder(level.tint.opacity(0.30), lineWidth: 1)
+                        )
+                        .matchedGeometryEffect(id: "priorityIndicator", in: indicatorNamespace)
+                } else if hover.hovering {
+                    Capsule().fill(Theme.surfaceHover)
+                }
+            }
+            .scaleEffect(hover.pressed ? 0.94 : 1)
         }
         .buttonStyle(.plain)
         .help("⌘\(level.rank + 1) · \(level.label)")
         .onHover { inside in
-            withAnimation(.easeOut(duration: 0.12)) { hover.hovering = inside }
+            withAnimation(Theme.easeFast) { hover.hovering = inside }
         }
-        .animation(.spring(response: 0.24, dampingFraction: 0.7), value: selected)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    if !hover.pressed { withAnimation(Theme.easeFast) { hover.pressed = true } }
+                }
+                .onEnded { _ in
+                    withAnimation(Theme.springSnappy) { hover.pressed = false }
+                }
+        )
+        .animation(reduceMotion ? nil : Theme.springSnappy, value: isSelected)
     }
 }
 
@@ -842,6 +910,7 @@ struct MemoRow: View {
     @MainActor
     final class HoverState: ObservableObject {
         @Published var hovering = false
+        @Published var pressed = false
     }
 
     var body: some View {
@@ -851,7 +920,7 @@ struct MemoRow: View {
                 ZStack {
                     Circle()
                         .strokeBorder(
-                            item.done ? Color.clear : (hover.hovering ? Theme.accent.opacity(0.6) : Color.primary.opacity(0.22)),
+                            hover.hovering && !item.done ? Theme.accent.opacity(0.7) : Color.primary.opacity(0.22),
                             lineWidth: 1.4
                         )
                         .frame(width: 15, height: 15)
@@ -860,16 +929,30 @@ struct MemoRow: View {
                         Circle()
                             .fill(Theme.accent)
                             .frame(width: 15, height: 15)
+                            .transition(.scale(scale: 0.5))
                         Image(systemName: "checkmark")
                             .font(.system(size: 8, weight: .bold))
                             .foregroundStyle(.white)
+                            .transition(.scale(scale: 0.4).combined(with: .opacity))
                     }
                 }
                 .frame(width: 17, height: 17)
-                .contentShape(Rectangle())
+                // 命中区放大：17pt 的圆圈实际可点范围更大，不必精确瞄准
+                .contentShape(Circle().inset(by: -4))
+                .scaleEffect(hover.pressed ? 0.88 : 1)
+                .animation(Theme.springBouncy, value: item.done)
             }
             .buttonStyle(.plain)
             .help(item.done ? "标记为未完成" : "标记为已完成")
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if !hover.pressed { withAnimation(Theme.easeFast) { hover.pressed = true } }
+                    }
+                    .onEnded { _ in
+                        withAnimation(Theme.springBouncy) { hover.pressed = false }
+                    }
+            )
             .padding(.top, 0.5)
 
             VStack(alignment: .leading, spacing: 2) {

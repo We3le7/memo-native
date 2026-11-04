@@ -36,9 +36,20 @@ enum Theme {
     static let strokeStrong = Color.primary.opacity(0.12)
 
     // 动效
+    //
+    // 三档曲线，用途分明：
+    //   snappy —— 点击、切换等「即时反馈」，要快
+    //   soft   —— 大块内容的进出场，要稳
+    //   easeFast —— 悬停这类高频、低幅的变化，快到几乎无感
     static let springSnappy = Animation.spring(response: 0.26, dampingFraction: 0.80)
     static let springSoft = Animation.spring(response: 0.36, dampingFraction: 0.86)
+    static let springBouncy = Animation.spring(response: 0.34, dampingFraction: 0.70)
     static let easeFast = Animation.easeOut(duration: 0.14)
+    static let easeMedium = Animation.easeInOut(duration: 0.22)
+
+    /// 列表增删的动效：入场略带弹跳，退场干脆
+    static let rowInsert = Animation.spring(response: 0.38, dampingFraction: 0.76)
+    static let rowRemove = Animation.easeIn(duration: 0.16)
 }
 
 // 优先级配色，与 App 图标里的四个点一致
