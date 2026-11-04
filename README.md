@@ -205,6 +205,14 @@ frameView.layer?.masksToBounds = true
 
 淡出由 SwiftUI 的 `opacity` 负责，**窗口 alpha 恒为 1**。这里踩过坑：一开始用 `NSWindow.animator().alphaValue` 做窗口级淡出，结果球再也不回来——实测把 alpha 设回 1 之后 0.35 秒仍是 0，窗口级 alpha 动画被打断后会停在终值且不再响应赋值。
 
+### 关掉球之后它不能再冒出来
+
+`hide()` 里原本无条件让球浮现。于是：在设置里关掉悬浮球 → 展开面板 → 收起，球又出现了。
+
+因为"收起面板"发生在"关掉开关"之后，把状态覆盖了回去，开关看起来完全没生效。
+
+修法是把判断抽成 `UILogic.shouldRevealOrbOnCollapse`：球关着时，任何路径都不浮现。4 种输入组合的穷举测试锁住这条。
+
 ### 跨桌面保持一致
 
 三个窗口都带 `.canJoinAllSpaces`，会跟着用户出现在每个桌面。

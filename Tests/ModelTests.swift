@@ -21,6 +21,7 @@ testSpan()
     testUnfoldAnchor()
     testFoldIsInverseOfUnfold()
     testSpaceChangeSyncOrb()
+    testOrbRevealRespectsToggle()
     testPriorityBreakdown()
 
 // 1. 排序：日期 → 完成态 → 优先级
@@ -436,6 +437,44 @@ func testSpaceChangeSyncOrb() {
         }
     }
     check(skipped == 2, "4 种组合里只有正在播动画的 2 种该跳过")
+}
+
+@MainActor
+
+
+/// 关掉悬浮球之后，任何路径都不该让它冒出来。
+///
+/// 真出过这个 bug：在设置里关掉球，展开面板再收起，球又出现了。
+/// 因为"收起面板"比"关掉开关"更晚发生，把状态覆盖了回去——
+/// 开关看起来完全没生效。
+func testOrbRevealRespectsToggle() {
+    // 球开着 + 正在收起 → 浮现
+    check(UILogic.shouldRevealOrbOnCollapse(
+        orbEnabled: true, isCollapsing: true
+    ), "球开启时收起应浮现")
+
+    // 球关着 + 正在收起 → 绝不浮现
+    check(!UILogic.shouldRevealOrbOnCollapse(
+        orbEnabled: false, isCollapsing: true
+    ), "球关闭时收起不该浮现")
+
+    // 没在收起 → 不插手
+    check(!UILogic.shouldRevealOrbOnCollapse(
+        orbEnabled: true, isCollapsing: false
+    ), "没在收起时不该浮现")
+    check(!UILogic.shouldRevealOrbOnCollapse(
+        orbEnabled: false, isCollapsing: false
+    ), "球关闭且没在收起时不该浮现")
+
+    // 穷举：只有"开着 + 在收"这一种该浮现
+    var revealed = 0
+    for enabled in [true, false] {
+        for collapsing in [true, false] {
+            if UILogic.shouldRevealOrbOnCollapse(
+                orbEnabled: enabled, isCollapsing: collapsing) { revealed += 1 }
+        }
+    }
+    check(revealed == 1, "4 种组合里只有 1 种该浮现")
 }
 
 @MainActor

@@ -154,3 +154,24 @@ extension UILogic {
         return true
     }
 }
+
+extension UILogic {
+    /// 面板收起时，要不要让球浮现。
+    ///
+    /// 这里曾经无条件浮现：用户在设置里关掉悬浮球，展开面板再收起，
+    /// 球又冒出来了——开关形同虚设。因为"收起面板"发生在"关掉开关"之后，
+    /// 把状态覆盖了回去。
+    ///
+    /// - Parameters:
+    ///   - orbEnabled: 设置里是否开启悬浮球
+    ///   - isCollapsing: 是否正在播收起动画
+    static func shouldRevealOrbOnCollapse(
+        orbEnabled: Bool,
+        isCollapsing: Bool
+    ) -> Bool {
+        // 球被关掉时，任何路径都不该让它出现
+        guard orbEnabled else { return false }
+        // 正在收起才需要浮现，其他时机不插手
+        return isCollapsing
+    }
+}

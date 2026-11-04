@@ -301,8 +301,18 @@ final class PanelController {
         // 原来是"面板收完之后再叫球出来"，中间有一段什么都没有的空白，
         // 观感是面板消失、然后球突然冒出来。现在两者共用一条时间轴，
         // 面板缩小的过程就是球变清楚的过程。
-        FloatingOrb.shared.primeForReveal()
-        FloatingOrb.shared.endAbsorb(duration: foldDuration)
+        // 球被关掉时不要叫它出来。
+        //
+        // 这里曾经无条件调 endAbsorb：用户在设置里关掉悬浮球，
+        // 展开面板再收起，球又冒出来了——开关形同虚设，
+        // 因为"收起面板"比"关掉开关"更晚发生，把状态覆盖回去。
+        if UILogic.shouldRevealOrbOnCollapse(
+            orbEnabled: FloatingOrb.shared.isEnabled,
+            isCollapsing: true
+        ) {
+            FloatingOrb.shared.primeForReveal()
+            FloatingOrb.shared.endAbsorb(duration: foldDuration)
+        }
 
         applyLevel(active: false)
         removeEscapeMonitor()
