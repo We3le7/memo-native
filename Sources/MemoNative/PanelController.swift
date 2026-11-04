@@ -172,7 +172,7 @@ final class PanelController {
             // 兜底：spring 有时会在恢复了 key window / 触发重排之后
             // 停在中间值（实测卡在 0.857），面板就永远是 588×648 而不是 600×660。
             // 动画时长过后直接把终值钉死，保证最终状态是确定的。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
                 if self.unfold.progress != 1 {
                     self.unfold.progress = 1
                 }
@@ -296,7 +296,10 @@ final class PanelController {
         // 动画播完再真正撤窗口、把球叫回来。
         // 顺序必须是"面板先缩、球后现"，反过来会看到球和面板重叠一瞬。
         let target = panel
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
+        // 等面板收到足够小再让球长回来。
+        // 原来是 0.22，比 spring 的 response(0.28) 还早——球会抢在前面冒出来，
+        // 和还没缩完的面板叠一瞬。0.26 让两者交接在同一拍上。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) { [weak self] in
             guard let self else { return }
             target.orderOut(nil)
             self.unfold.progress = 1

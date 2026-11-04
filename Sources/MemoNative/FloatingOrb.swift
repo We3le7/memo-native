@@ -20,7 +20,6 @@ struct OrbView: View {
     let pending: Int
     let overdue: Int
     let unread: Int
-    let expanded: Bool
     let hovering: Bool
     /// 玻璃强度 0…1，来自设置，影响球体的通透度与轮廓强度
     var strength: Double = GlassAppearance.defaultStrength
@@ -34,7 +33,9 @@ struct OrbView: View {
     /// 原来是"有逾期就显示逾期数、否则显示待办数"，同一个位置两种含义，
     /// 用户看到 3 没法知道是 3 件待办还是 3 件逾期。逾期改由颜色和下方小字表达。
     private var badge: Int { pending }
-    private var isAlerting: Bool { overdue > 0 && !expanded }
+    /// 面板已展开、球正在让位。由吸入进度推导，不再单独存一个状态位。
+    private var isYielding: Bool { collapse > 0.001 }
+    private var isAlerting: Bool { overdue > 0 && !isYielding }
 
     /// 悬停时轻微放大，按下时由外层缩回——形成"被按下去"的手感
     private var scale: CGFloat {
@@ -42,7 +43,6 @@ struct OrbView: View {
         if collapse > 0 {
             return OrbMotion.scale(for: collapse)
         }
-        if expanded { return 1.0 }
         return hovering ? 1.04 : 1.0
     }
 
@@ -125,7 +125,7 @@ struct OrbView: View {
             content
 
             // ── 6. 未读提醒：右上角小圆点，带白边 ────────
-            if unread > 0 && !expanded {
+            if unread > 0 && !isYielding {
                 Circle()
                     .fill(Color.red)
                     .frame(width: 7, height: 7)
@@ -136,15 +136,6 @@ struct OrbView: View {
                     )
                     .shadow(color: .red.opacity(0.35), radius: 3)
                     .transition(.scale(scale: 0.4).combined(with: .opacity))
-            }
-
-            // ── 7. 展开态：底部一条短横线 ────────────────
-            if expanded {
-                Capsule()
-                    .fill(Color.primary.opacity(0.30))
-                    .frame(width: 11, height: 1.8)
-                    .offset(y: OrbMetrics.bubble * 0.30)
-                    .transition(.opacity.combined(with: .scale(scale: 0.6)))
             }
         }
         .frame(width: OrbMetrics.bubble, height: OrbMetrics.bubble)
@@ -168,23 +159,18 @@ struct OrbView: View {
             y: hovering ? 5 : 4
         )
         .animation(.spring(response: 0.30, dampingFraction: 0.70), value: hovering)
-        .animation(.spring(response: 0.34, dampingFraction: 0.76), value: expanded)
         .animation(.spring(response: 0.38, dampingFraction: 0.80), value: badge)
         // 吸入用略低的阻尼：允许一点过冲，"鼓一下再收"的弹性才明显
-        .animation(.spring(response: 0.26, dampingFraction: 0.62), value: collapse)
+        // 吸入比面板的展开(0.40/0.74)略快、略弹，
+        // 视觉上像球被面板"吸"走，而不是两者各演各的。
+        .animation(.spring(response: 0.30, dampingFraction: 0.70), value: collapse)
     }
 
     // MARK: 内容
 
     @ViewBuilder
     private var content: some View {
-        if expanded {
-            // 展开态：一个安静的「收起」箭头，替代数字
-            Image(systemName: "chevron.down")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color.primary.opacity(0.55))
-                .transition(.scale(scale: 0.7).combined(with: .opacity))
-        } else if hovering && !breakdown.nonEmpty.isEmpty {
+        if hovering && !breakdown.nonEmpty.isEmpty {
             // 悬停：摊开各紧急程度的件数。
             //
             // 球只有 46pt，四行排不下，所以做成一行四组「色点 + 数字」。
@@ -300,7 +286,7 @@ final class FloatingOrb {
         guard isEnabled else { return }
         buildIfNeeded()
         guard let panel else { return }
-        panel.alphaValue = hoverState?.expanded == true ? 0 : 1
+        panel.alphaValue = 1
         panel.orderFront(nil)
         bind()
     }
@@ -314,16 +300,6 @@ final class FloatingOrb {
         isEnabled.toggle()
     }
 
-    /// 展开/折叠的唯一入口。
-    ///
-    /// 两者互斥：面板展开时球淡出，面板收起时球淡入。
-    /// 这既是「折叠」的语义，也避开了一个层级问题——
-    /// 球常驻 floating，而面板失焦会降到 normal，球会永远压在面板上。
-    func setExpanded(_ expanded: Bool) {
-        hoverState?.expanded = expanded
-        expanded ? fadeOut() : fadeIn()
-    }
-
     /// 面板正在从球的位置展开：球先"鼓一下再被吸进去"。
     ///
     /// 和 setExpanded 分开，是因为时序不同：
@@ -331,7 +307,6 @@ final class FloatingOrb {
     /// 否则用户看到的是"球没了，然后一个面板凭空出现"。
     func beginAbsorb(duration: Double = 0.24) {
         guard let hover = hoverState, let panel else { return }
-        hover.expanded = true
 
         // 只驱动 SwiftUI 侧的 collapse，不碰窗口 alpha。
         //
@@ -360,46 +335,6 @@ final class FloatingOrb {
         }
         panel.ignoresMouseEvents = false
         bind()
-    }
-
-    private func fadeIn() {
-        // 用户关掉悬浮球后，收起面板不应再把它叫回来
-        guard isEnabled else {
-            panel?.alphaValue = 0
-            panel?.ignoresMouseEvents = true
-            return
-        }
-        buildIfNeeded()
-        guard let panel else { return }
-
-        // 回到「可见 + 不透明 + 可点击」这个确定状态。
-        if !panel.isVisible {
-            panel.orderFront(nil)
-        }
-        // 尺寸可能被系统重置（orderOut 后 orderFront 会变 0x0），这里兜底修回
-        let target = NSSize(width: OrbMetrics.size, height: OrbMetrics.size)
-        if panel.frame.size != target {
-            let origin = panel.frame.origin
-            panel.setFrame(NSRect(origin: origin, size: target), display: false)
-        }
-        panel.ignoresMouseEvents = false
-        if panel.alphaValue < 1 {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.16
-                panel.animator().alphaValue = 1
-            }
-        }
-        panel.alphaValue = 1
-        bind()
-    }
-
-    private func fadeOut() {
-        guard let panel else { return }
-        // 只置透明、不移出屏幕。
-        // orderOut 之后再 orderFront 会让窗口丢掉尺寸（变 0x0），
-        // 球下次就"消失"了；alpha=0 的窗口不接受点击，效果等价且安全。
-        panel.alphaValue = 0
-        panel.ignoresMouseEvents = true
     }
 
     private func buildIfNeeded() {
@@ -689,9 +624,6 @@ final class OrbContainerView: NSView {
 @MainActor
 final class OrbHover: ObservableObject {
     @Published var isHovering = false
-    @Published var expanded = false {
-        didSet { if oldValue != expanded { sync() } }
-    }
     @Published var pending = 0
     @Published var overdue = 0
     @Published var unread = 0
@@ -704,8 +636,6 @@ final class OrbHover: ObservableObject {
     /// 单独一个量而不是复用 expanded：expanded 只是开关，
     /// 驱不出"先鼓一下再收回去"这种带过冲的曲线。
     @Published var collapse: CGFloat = 0
-
-    private func sync() {}
 }
 
 /// 只订阅状态、不持有点击手势（点击由 AppKit 层处理）
@@ -717,7 +647,6 @@ struct OrbContent: View {
             pending: hover.pending,
             overdue: hover.overdue,
             unread: hover.unread,
-            expanded: hover.expanded,
             hovering: hover.isHovering,
             strength: hover.strength,
             collapse: hover.collapse,

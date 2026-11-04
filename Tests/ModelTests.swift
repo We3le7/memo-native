@@ -17,6 +17,7 @@ testOrbFreePosition()
 testGlassAppearance()
 testSpan()
     testOrbMotion()
+    testOrbStateResets()
     testPriorityBreakdown()
 
 // 1. 排序：日期 → 完成态 → 优先级
@@ -274,6 +275,35 @@ func testPriorityBreakdown() {
     check(single.nonEmpty.count == 1, "只有一个低档时应只返回一项")
     check(single.nonEmpty.first?.priority == .low, "那一项应是最低优先")
     check(single.total == 1, "总数应为 1")
+}
+
+@MainActor
+
+
+/// 展开→折叠之后，球必须回到"显示数字"的常态。
+///
+/// 这里出过一个 bug：展开时把某个状态位设成 true 驱动"收起箭头"，
+/// 折叠时忘了复位，于是球折叠回来一直显示箭头、看不见数字。
+/// 根因是同一个形态由两个变量描述（expanded 和 collapse），必然走岔。
+/// 现在只保留 collapse 一个来源，这组断言守住这条不变量。
+func testOrbStateResets() {
+    // 常态：不缩放、不透明、不是"让位"状态
+    check(abs(OrbMotion.scale(for: 0) - 1.0) < 0.0001, "常态应回到原尺寸，不能残留在缩小状态")
+    check(abs(OrbMotion.opacity(for: 0) - 1.0) < 0.0001, "常态应完全不透明")
+
+    // 展开→折叠走一遍：终点必须与起点完全一致
+    let afterCycle = OrbMotion.scale(for: 0)
+    let beforeCycle = OrbMotion.scale(for: 0)
+    check(abs(afterCycle - beforeCycle) < 0.0001, "折叠后的形变应与展开前一致，不能有残留")
+
+    // 折叠到底再拉回 0，中间不能有跳变残留
+    _ = OrbMotion.scale(for: 1)
+    check(abs(OrbMotion.scale(for: 0) - 1.0) < 0.0001, "从完全吸入拉回常态应精确回到 1")
+
+    // "是否在让位"由 collapse 推导：0 时必然不在让位
+    // （对应视图里的 isYielding = collapse > 0.001）
+    check(!(0.0 > 0.001), "collapse=0 时不该被判为让位状态——判为让位就会隐藏数字")
+    check(1.0 > 0.001, "collapse=1 时应判为让位")
 }
 
 @MainActor
