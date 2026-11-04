@@ -145,8 +145,11 @@ extension UILogic {
     ///   - isHiding: 是否正在播收起动画
     static func shouldSyncOrbOnSpaceChange(
         isPanelVisible: Bool,
-        isHiding: Bool
+        isHiding: Bool,
+        orbEnabled: Bool
     ) -> Bool {
+        // 球被关掉时，一切与它相关的行为都该停手
+        guard orbEnabled else { return false }
         // 正在播动画时不要去改，会和动画抢同一个属性
         guard !isHiding else { return false }
         // 面板是否可见都值得校正一次：可见→球该藏，不可见→球该现

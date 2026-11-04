@@ -411,33 +411,44 @@ func testFoldIsInverseOfUnfold() {
 func testSpaceChangeSyncOrb() {
     // 面板展开着：要同步（让球藏起来）
     check(UILogic.shouldSyncOrbOnSpaceChange(
-        isPanelVisible: true, isHiding: false
+        isPanelVisible: true, isHiding: false, orbEnabled: true
     ), "面板展开时切桌面应同步球的显隐")
 
     // 面板收起：也要同步（让球露出来）
     check(UILogic.shouldSyncOrbOnSpaceChange(
-        isPanelVisible: false, isHiding: false
+        isPanelVisible: false, isHiding: false, orbEnabled: true
     ), "面板收起时切桌面也应同步")
 
     // 正在播动画：不要插手，会和动画抢同一个属性
     check(!UILogic.shouldSyncOrbOnSpaceChange(
-        isPanelVisible: true, isHiding: true
+        isPanelVisible: true, isHiding: true, orbEnabled: true
     ), "正在收起时不该同步")
     check(!UILogic.shouldSyncOrbOnSpaceChange(
-        isPanelVisible: false, isHiding: true
+        isPanelVisible: false, isHiding: true, orbEnabled: true
     ), "正在收起时不该同步（面板不可见）")
 
+    // 球关掉：任何情况都不碰
+    check(!UILogic.shouldSyncOrbOnSpaceChange(
+        isPanelVisible: true, isHiding: false, orbEnabled: false
+    ), "球关闭时不该同步")
+    check(!UILogic.shouldSyncOrbOnSpaceChange(
+        isPanelVisible: false, isHiding: false, orbEnabled: false
+    ), "球关闭且面板收起时也不该同步")
+
     // 穷举：唯一不该同步的只有"正在播动画"
-    var skipped = 0
-    for vis in [true, false] {
-        for hiding in [true, false] {
-            let r = UILogic.shouldSyncOrbOnSpaceChange(
-                isPanelVisible: vis, isHiding: hiding)
-            if !r { skipped += 1 }
-            check(r == !hiding, "组合 vis=\(vis) hiding=\(hiding) 判断错误")
+    var synced = 0
+    for enabled in [true, false] {
+        for vis in [true, false] {
+            for hiding in [true, false] {
+                let r = UILogic.shouldSyncOrbOnSpaceChange(
+                    isPanelVisible: vis, isHiding: hiding, orbEnabled: enabled)
+                if r { synced += 1 }
+                check(r == (enabled && !hiding),
+                      "组合 enabled=\(enabled) vis=\(vis) hiding=\(hiding) 判断错误")
+            }
         }
     }
-    check(skipped == 2, "4 种组合里只有正在播动画的 2 种该跳过")
+    check(synced == 2, "8 种组合里只有「球开 + 没在收」的 2 种该同步")
 }
 
 @MainActor

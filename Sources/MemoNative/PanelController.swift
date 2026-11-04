@@ -88,7 +88,10 @@ final class PanelController {
     private var shownAt: Date = .distantPast
     /// 刚显示后的保护期：系统在启动/切 App 瞬间会连发失焦通知，
     /// 这段时间内的失焦不算“用户主动点了别处”。
-    private let revealGrace: TimeInterval = 1.6
+    /// 原来是 1.6s，太长了——用户展开面板、看一眼、立刻切走，
+    /// 这一整段都落在保护期内，面板就留在屏幕上不收起。
+    /// 系统连发通知只在启动那几帧，0.35s 足够盖住。
+    private let revealGrace: TimeInterval = 0.35
 
     private var inRevealGrace: Bool {
         Date().timeIntervalSince(shownAt) < revealGrace
@@ -138,7 +141,9 @@ final class PanelController {
         shownAt = Date()
         applyLevel(active: true)
         // 从悬浮球展开时，面板贴着球；否则贴光标
-        if let orbFrame = FloatingOrb.shared.currentFrame, FloatingOrb.shared.isVisible {
+        if FloatingOrb.shared.isEnabled,
+           let orbFrame = FloatingOrb.shared.currentFrame,
+           FloatingOrb.shared.isVisible {
             positionNearOrb(orbFrame)
         } else {
             positionNearCursor()
@@ -400,8 +405,12 @@ final class PanelController {
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                guard let self, let panel = self.panel, panel.isVisible else { return }
-                if self.isHiding || self.inRevealGrace { return }
+                guard let self, let panel = self.panel, panel.isVisible else {
+                    return
+                }
+                if self.isHiding || self.inRevealGrace {
+                    return
+                }
                 // App 已重新激活时不再执行下沉
                 guard !NSApp.isActive else { return }
                 if panel.attachedSheet != nil { return }
@@ -430,7 +439,8 @@ final class PanelController {
             guard let self, let panel = self.panel else { return }
             guard UILogic.shouldSyncOrbOnSpaceChange(
                 isPanelVisible: panel.isVisible,
-                isHiding: self.isHiding
+                isHiding: self.isHiding,
+                orbEnabled: FloatingOrb.shared.isEnabled
             ) else { return }
             FloatingOrb.shared.syncVisibilityToPanel(panelVisible: panel.isVisible)
         })
@@ -441,7 +451,8 @@ final class PanelController {
         guard let panel else { return }
         guard UILogic.shouldSyncOrbOnSpaceChange(
             isPanelVisible: panel.isVisible,
-            isHiding: isHiding
+            isHiding: isHiding,
+            orbEnabled: FloatingOrb.shared.isEnabled
         ) else { return }
         FloatingOrb.shared.syncVisibilityToPanel(panelVisible: panel.isVisible)
     }
@@ -522,7 +533,9 @@ final class PanelController {
     private func playUnfold() {
         guard let panel, let container = animContainer, let layer = container.layer else { return }
 
-        let orbFrame = FloatingOrb.shared.currentFrame
+        // 球关着时没有可收敛的锚点，从中心展开。
+        // 否则会朝一个看不见的位置缩——那个位置是球被隐藏前的旧坐标。
+        let orbFrame = FloatingOrb.shared.isEnabled ? FloatingOrb.shared.currentFrame : nil
         let anchor = orbFrame.map { unfoldAnchorPoint(panel: panel, orbFrame: $0) }
             ?? CGPoint(x: 0.5, y: 0.5)
         container.applyAnchor(anchor)
@@ -599,7 +612,8 @@ final class PanelController {
     private func playFold() {
         guard let panel, let container = animContainer, let layer = container.layer else { return }
 
-        let orbFrame = FloatingOrb.shared.currentFrame
+        // 同展开：球关着时向中心收缩，而不是朝一个看不见的旧坐标。
+        let orbFrame = FloatingOrb.shared.isEnabled ? FloatingOrb.shared.currentFrame : nil
         let anchor = orbFrame.map { unfoldAnchorPoint(panel: panel, orbFrame: $0) }
             ?? CGPoint(x: 0.5, y: 0.5)
         container.applyAnchor(anchor)
