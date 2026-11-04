@@ -190,3 +190,35 @@ extension UILogic {
         orbEnabled
     }
 }
+
+// MARK: - 折叠淡出曲线
+
+extension UILogic {
+    /// 折叠时面板的不透明度曲线。
+    ///
+    /// 页面不能消失太快——这是用户体验问题，也是可测的数值问题。
+    ///
+    /// 原来的曲线 [1, 1, 0.88, 0.55, 0] 到 55% 还有 0.88，然后骤降，
+    /// 最后 22% 直接归零。观感是"一直很清楚、末尾啪地没了"，
+    /// 完全看不到面板收缩的过程。
+    ///
+    /// 现在让淡出更早起步、更均匀，面板缩小的全程都有内容可见。
+    static let foldFadeValues: [NSNumber] = [1.0, 1.0, 0.92, 0.70, 0.38, 0.0]
+    static let foldFadeKeyTimes: [NSNumber] = [0, 0.30, 0.48, 0.66, 0.84, 1.0]
+
+    /// 折叠过程中，某个进度处的不透明度（线性插值）。
+    static func foldOpacity(atProgress t: Double) -> Double {
+        let ts = foldFadeKeyTimes.map { $0.doubleValue }
+        let vs = foldFadeValues.map { $0.doubleValue }
+        guard let first = ts.first, let last = ts.last else { return 1 }
+        if t <= first { return vs.first ?? 1 }
+        if t >= last { return vs.last ?? 0 }
+        for i in 1..<ts.count where t <= ts[i] {
+            let span = ts[i] - ts[i-1]
+            guard span > 0 else { return vs[i] }
+            let f = (t - ts[i-1]) / span
+            return vs[i-1] + (vs[i] - vs[i-1]) * f
+        }
+        return vs.last ?? 0
+    }
+}

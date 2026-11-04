@@ -21,6 +21,7 @@ testSpan()
     testUnfoldAnchor()
     testFoldIsInverseOfUnfold()
     testFoldSlowerButSameShape()
+    testFoldFadeNotTooFast()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -543,6 +544,51 @@ func testFoldSlowerButSameShape() {
     // 关键帧数量不随时长变化
     let kt = MotionCurve.keyTimes(count: count)
     check(kt.count == count, "关键帧数量只由帧数决定，与时长无关")
+}
+
+@MainActor
+
+
+/// 折叠时页面不能消失太快。
+///
+/// 老曲线 [1, 1, 0.88, 0.55, 0] 的问题：到 55% 还有 0.88，
+/// 然后骤降，最后 22% 直接归零。观感是"一直很清楚、末尾啪地没了"，
+/// 面板收缩的过程根本没被看见。
+func testFoldFadeNotTooFast() {
+    let opacity = UILogic.foldOpacity
+
+    // 起点必须完全不透明
+    check(abs(opacity(0.0) - 1.0) < 0.0001, "折叠起点应完全不透明")
+    // 终点必须完全透明
+    check(abs(opacity(1.0) - 0.0) < 0.0001, "折叠终点应完全透明")
+
+    // 前段（30% 之前）不该开始变淡——先让用户看清静止的页面
+    for t in stride(from: 0.0, through: 0.30, by: 0.05) {
+        check(abs(opacity(t) - 1.0) < 0.0001, "进度 \(t) 处应仍完全不透明")
+    }
+
+    // 中段要留得住：50% 时至少还有 0.6，不能一上来就快没了
+    check(opacity(0.50) > 0.60, "进度 0.50 处应仍有明显不透明度（当前 \(opacity(0.50))）")
+    // 70% 时还该看得见（老曲线此处已接近 0.5 且快速下坠）
+    check(opacity(0.70) > 0.30, "进度 0.70 处应仍可辨认")
+
+    // 单调不增：不能出现"淡了又清晰"的抖动
+    var prev = 2.0
+    for i in 0...100 {
+        let v = opacity(Double(i) / 100.0)
+        check(v <= prev + 0.0001, "不透明度必须单调不增（进度 \(Double(i)/100)）")
+        prev = v
+    }
+
+    // 末段不能"啪地归零"：最后 10% 的落差要小于 0.3
+    let drop = opacity(0.90) - opacity(1.0)
+    check(drop < 0.30, "最后 10% 的落差应平缓（当前 \(drop)）")
+
+    // 关键帧首尾必须是 0 和 1
+    let kt = UILogic.foldFadeKeyTimes.map { $0.doubleValue }
+    check(abs(kt.first! - 0.0) < 0.0001, "关键帧应从 0 起")
+    check(abs(kt.last! - 1.0) < 0.0001, "关键帧应到 1 止")
+    check(kt.count == UILogic.foldFadeValues.count, "关键帧与取值数量必须一致")
 }
 
 @MainActor

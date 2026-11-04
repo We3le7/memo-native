@@ -355,6 +355,7 @@ final class PanelController {
 
 
 
+
         // 动画播完再真正撤窗口。
         // 多留 0.04s 余量：动画稍慢或系统繁忙时，"啪"地消失会很扎眼。
         let target = panel
@@ -550,7 +551,7 @@ final class PanelController {
     /// 慢一点让眼睛跟得上面板往球那边缩的过程。
     /// 两者的**曲线形状**仍然完全一致（同一组阻尼/帧数/关键帧），
     /// 只是时间轴拉长——逆过程的观感不变，只是放慢。
-    private static let foldDuration: CFTimeInterval = 0.52
+    private static let foldDuration: CFTimeInterval = 0.45
     private static let unfoldStartScale: CGFloat = 0.06
     private static let unfoldFrames = 34
     private static let unfoldDamping: CGFloat = 0.74
@@ -679,8 +680,16 @@ final class PanelController {
 
         let fadeAnim = CAKeyframeAnimation(keyPath: "opacity")
         // 与展开的 [0, 0.55, 0.88, 1, 1] 严格互补
-        fadeAnim.values = [1.0, 1.0, 0.88, 0.55, 0.0]
-        fadeAnim.keyTimes = [0, 0.38, 0.55, 0.78, 1.0]
+        // 页面不能消失太快。
+        //
+        // 原来 [1, 1, 0.88, 0.55, 0] / [0, .38, .55, .78, 1]：
+        // 到 55% 还有 0.88，然后 78% 掉到 0.55，最后 22% 直接归零。
+        // 观感是"一直很清楚、末尾啪地没了"，看不到收的过程。
+        //
+        // 现在让淡出更早起步、更均匀：到 40% 开始降，末尾才归零。
+        // 面板缩小的过程始终有内容可见，收缩动作才读得出来。
+        fadeAnim.values = UILogic.foldFadeValues
+        fadeAnim.keyTimes = UILogic.foldFadeKeyTimes
         fadeAnim.duration = duration
         fadeAnim.fillMode = .forwards
         fadeAnim.isRemovedOnCompletion = false
