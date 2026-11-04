@@ -348,7 +348,7 @@ struct ContentView: View {
                 // 工期放在最左，且直接展开——不用先悬停再点。
                 // 它是这一行里最常调的东西，藏在悬停后面等于每次
                 // 都多一步；常驻反而更快，也让这一行有个自然的起点。
-                SpanField(span: $ui.span)
+                SpanPicker(span: $ui.span)
                     .padding(.trailing, 10)
 
                 Spacer(minLength: 8)
@@ -1248,300 +1248,118 @@ extension Notification.Name {
     static let memoOpenSettings = Notification.Name("memo.openSettings")
 }
 
-// MARK: - 工期选择
+// MARK: - 工期选择（与优先级同构）
 
-/// 工期：一件事要占用几天。
+/// 工期选择：结构与 PriorityPicker 完全一致。
 ///
-/// 做成「点一下开小面板」而不是下拉菜单，是因为这个面板本身是
-/// nonactivating panel，系统的 NSPopUpButton / Menu 在它上面
-/// 经常打不开（同样的坑在日期选择上已经踩过）。
-struct SpanField: View {
+/// 同一个输入行里并排两个互斥档位控件，必须用同一套结构：
+/// 同样的胶囊外壳、同样的 matchedGeometryEffect 滑动底块、
+/// 同样的悬停/按下/弹簧参数。任何一处不同，
+/// 眼睛都会立刻觉得"这两个不是一类东西"。
+struct SpanPicker: View {
     @Binding var span: Int
-    @StateObject private var wheel = WheelState()
 
-    /// 可选工期范围：1 天到 30 天。
-    /// 上限 30 是因为再长基本不是"近期要做的事"，
-    /// 而是项目排期，那不该塞在这个随手记的面板里。
-    static let range = UILogic.spanRange
+    @Namespace private var indicator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @MainActor
-    final class WheelState: ObservableObject {
-        @Published var expanded = false
-    }
+    /// 快捷档位。和优先级一样是有限的几档——
+    /// 常用工期其实只有这几个，给无限可调反而增加决策成本。
+    static let presets = [1, 2, 3, 5, 7]
 
     var body: some View {
-        HStack(spacing: 6) {
-            // 图标：点击展开滚轮，用于精确选择
-            Button {
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.80)) {
-                    wheel.expanded.toggle()
-                }
-            } label: {
-                Image(systemName: "calendar.badge.clock")
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(wheel.expanded ? Theme.accent : Theme.inkSecondary)
-                    .frame(width: 18, height: 18)
-                    .contentShape(Rectangle().inset(by: -3))
-            }
-            .buttonStyle(.plain)
-            .help("自定义工期")
-
-            SpanSlider(span: $span, range: Self.range)
-        }
-        .overlay(alignment: .bottomLeading) {
-            if wheel.expanded {
-                SpanWheel(span: $span, range: Self.range) {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                        wheel.expanded = false
+        HStack(spacing: 2) {
+            ForEach(Self.presets, id: \.self) { d in
+                SpanSegment(
+                    days: d,
+                    isSelected: span == d,
+                    indicatorNamespace: indicator,
+                    reduceMotion: reduceMotion
+                ) {
+                    guard span != d else { return }
+                    if reduceMotion {
+                        span = d
+                    } else {
+                        withAnimation(Theme.springSnappy) { span = d }
                     }
                 }
-                .offset(x: -4, y: 30)
-                .transition(
-                    .asymmetric(
-                        insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .topLeading)),
-                        removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .topLeading))
-                    )
-                )
-                .zIndex(10)
             }
         }
+        .padding(2)
+        .background(Capsule().fill(Theme.surface))
+        .overlay(Capsule().strokeBorder(Theme.stroke, lineWidth: Theme.hairline))
     }
 }
 
-/// 工期滚轮：上下滑动选择天数，形制仿 iOS 的时间选择器。
-///
-/// 为什么自己做而不用 NSDatePicker/SwiftUI Picker：
-/// 面板是 nonactivating panel，系统弹出层在这上面不可靠
-///（日期选择器踩过同一个坑）。纯视图内的滚轮没有这层依赖。
-struct SpanWheel: View {
-    @Binding var span: Int
-    let range: ClosedRange<Int>
-    let onClose: () -> Void
+private struct SpanSegment: View {
+    let days: Int
+    let isSelected: Bool
+    let indicatorNamespace: Namespace.ID
+    let reduceMotion: Bool
+    let action: () -> Void
 
-    @StateObject private var state = WheelDrag()
-    /// 每行高度。滚轮靠 offset 滚动，这个值决定"一格"的粒度。
-    private static let rowHeight: CGFloat = 18
-    /// 可见行数（奇数，当前项在正中）
-    private static let visibleRows = 5
+    @StateObject private var hover = HoverState()
 
     @MainActor
-    final class WheelDrag: ObservableObject {
-        /// 拖动中累积的偏移（pt），负值向上
-        @Published var dragOffset: CGFloat = 0
-        @Published var dragging = false
-    }
-
-    private var height: CGFloat { Self.rowHeight * CGFloat(Self.visibleRows) }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("工期")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Theme.inkTertiary)
-                Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(Theme.inkTertiary)
-                        .frame(width: 14, height: 14)
-                        .contentShape(Rectangle().inset(by: -2))
-                }
-                .buttonStyle(.plain)
-                .help("关闭")
-            }
-            .padding(.horizontal, 9)
-            .padding(.top, 6)
-
-            ZStack {
-                // 选中行的高亮条：iOS 滚轮那种贯穿的圆角矩形
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(Theme.accent.opacity(0.09))
-                    .frame(height: Self.rowHeight)
-                    .padding(.horizontal, 5)
-
-                // 数字列：上下各多铺几行做出"滚动感"
-                VStack(spacing: 0) {
-                    ForEach(visibleValues, id: \.self) { value in
-                        Text(UILogic.spanLabel(value))
-                            .font(.system(
-                                size: value == span ? 11.5 : 10,
-                                weight: value == span ? .semibold : .regular
-                            ))
-                            .monospacedDigit()
-                            .foregroundStyle(
-                                value == span ? Theme.accent
-                                              : Theme.inkSecondary.opacity(distanceOpacity(value))
-                            )
-                            .frame(height: Self.rowHeight)
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-                .offset(y: state.dragOffset)
-            }
-            .frame(height: height)
-            .clipped()
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        state.dragging = true
-                        // 跟手位移最多一格。
-                        //
-                        // 原来是"超过半格就提交并把 offset 减去一格"，
-                        // 但 translation 是相对手势起点的累计值——
-                        // 手指继续移动就继续触发，拖一小段能连跳好几格。
-                        // 现在把位移夹在一格之内，松手时才按方向提交。
-                        let limit = Self.rowHeight
-                        state.dragOffset = max(-limit, min(limit, value.translation.height))
-                    }
-                    .onEnded { value in
-                        state.dragging = false
-                        // 松手时按位移方向提交。半个格子的阈值，
-                        // 加上甩动预测——轻甩一下也能走一格，不用拖到底。
-                        let delta = UILogic.wheelDelta(
-                            translation: Double(value.translation.height),
-                            predicted: Double(value.predictedEndTranslation.height),
-                            rowHeight: Double(Self.rowHeight)
-                        )
-                        shift(by: delta)
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                            state.dragOffset = 0
-                        }
-                    }
-            )
-            .padding(.bottom, 6)
-        }
-        .frame(width: 116)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Theme.surfaceRaised)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(Theme.stroke, lineWidth: Theme.hairline)
-        )
-        .shadow(color: .black.opacity(0.10), radius: 8, y: 2)
-    }
-
-    /// 当前可见的数字：中间是 span，上下各铺几行。
-    private var visibleValues: [Int] {
-        let half = Self.visibleRows / 2
-        return (0..<Self.visibleRows).map { offset in
-            let delta = offset - half
-            return min(range.upperBound, max(range.lowerBound, span + delta))
-        }
-    }
-
-    /// 离中心越远越淡，模拟滚轮的景深。
-    private func distanceOpacity(_ value: Int) -> Double {
-        let distance = abs(value - span)
-        return max(0.18, 1.0 - Double(distance) * 0.28)
-    }
-
-    private func shift(by delta: Int) {
-        guard delta != 0 else { return }
-        let next = min(range.upperBound, max(range.lowerBound, span + delta))
-        guard next != span else { return }
-        span = next
-    }
-}
-
-/// 工期滑块：与优先级选择器同高同圆角，视觉上属于同一排控件。
-///
-/// 不用系统 Slider——它的轨道高度和这排胶囊对不上，
-/// 而且小尺寸下拇指很难点准。这里自己画，尺寸完全可控。
-struct SpanSlider: View {
-    @Binding var span: Int
-    let range: ClosedRange<Int>
-
-    @StateObject private var state = SliderState()
-
-    @MainActor
-    final class SliderState: ObservableObject {
-        @Published var dragging = false
+    final class HoverState: ObservableObject {
         @Published var hovering = false
+        @Published var pressed = false
     }
 
-    private var progress: Double { UILogic.sliderProgress(for: span) }
+    /// 全用强调色而不像优先级那样每档一色：
+    /// 工期是同一件事的连续取值，不是四种性质不同的类别。
+    private var tint: Color { Theme.accent }
+
+    private var label: String { days <= 1 ? "当天" : "\(days) 天" }
 
     var body: some View {
-        HStack(spacing: 7) {
-            Text(UILogic.spanLabel(span))
-                .font(.system(size: 10.5, weight: state.dragging ? .semibold : .medium))
-                .monospacedDigit()
-                .foregroundStyle(state.dragging ? Theme.accent : Theme.ink)
-                .frame(width: 34, alignment: .leading)
-                // 数字变化不做位移，只做淡入淡出——
-                // 宽度锁死才不会推着滑块左右抖。
-                .animation(.easeOut(duration: 0.10), value: span)
+        Button(action: action) {
+            HStack(spacing: 4) {
+                // 圆点与优先级同位同尺寸，保持两排节奏一致
+                Circle()
+                    .fill(tint.opacity(isSelected ? 1.0 : 0.80))
+                    .frame(width: isSelected ? 6.5 : 5.5, height: isSelected ? 6.5 : 5.5)
 
-            GeometryReader { geo in
-                let w = geo.size.width
-                let thumb: CGFloat = 11
-
-                ZStack(alignment: .leading) {
-                    // 轨道
+                Text(label)
+                    .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
+                    .foregroundStyle(isSelected ? tint : tint.opacity(0.72))
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .padding(.horizontal, 7)
+            .frame(height: 22)
+            .contentShape(Rectangle().inset(by: -3))
+            .background {
+                if isSelected {
                     Capsule()
-                        .fill(Theme.surfaceHover)
-                        .frame(height: 3)
-
-                    // 已选区间
-                    Capsule()
-                        .fill(Theme.accent.opacity(state.hovering || state.dragging ? 0.75 : 0.55))
-                        .frame(width: max(thumb, w * progress), height: 3)
-
-                    // 拇指
-                    Circle()
-                        .fill(Color.white)
-                        .overlay(Circle().strokeBorder(Theme.accent.opacity(0.5), lineWidth: 1))
-                        .shadow(color: .black.opacity(state.dragging ? 0.16 : 0.08),
-                                radius: state.dragging ? 3 : 1.5, y: 0.5)
-                        .frame(width: thumb, height: thumb)
-                        .scaleEffect(state.dragging ? 1.18 : (state.hovering ? 1.08 : 1.0))
-                        .offset(x: max(0, min(w - thumb, w * progress - thumb / 2)))
-                }
-                .frame(height: 18)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            state.dragging = true
-                            update(to: value.location.x, width: w)
-                        }
-                        .onEnded { _ in
-                            state.dragging = false
-                        }
-                )
-                .onHover { inside in
-                    withAnimation(.easeOut(duration: 0.12)) { state.hovering = inside }
+                        .fill(tint.opacity(0.13))
+                        .overlay(
+                            Capsule().strokeBorder(tint.opacity(0.30), lineWidth: 1)
+                        )
+                        .matchedGeometryEffect(id: "spanIndicator", in: indicatorNamespace)
+                } else if hover.hovering {
+                    Capsule().fill(Theme.surfaceHover)
                 }
             }
-            .frame(height: 18)
+            .scaleEffect(hover.pressed ? 0.94 : 1)
         }
-        .padding(.horizontal, 7)
-        .frame(height: 22)
-        .background(
-            Capsule().fill(state.hovering || state.dragging ? Theme.surfaceHover : Theme.surface)
+        .buttonStyle(.plain)
+        .help(days <= 1 ? "当天完成" : "\(days) 天")
+        .onHover { inside in
+            withAnimation(Theme.easeFast) { hover.hovering = inside }
+        }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    if !hover.pressed { withAnimation(Theme.easeFast) { hover.pressed = true } }
+                }
+                .onEnded { _ in
+                    withAnimation(Theme.springSnappy) { hover.pressed = false }
+                }
         )
-        .overlay(
-            Capsule().strokeBorder(
-                state.dragging ? Theme.accent.opacity(0.45) : Theme.stroke,
-                lineWidth: Theme.hairline
-            )
-        )
-        .animation(.easeOut(duration: 0.14), value: state.dragging)
-        .animation(.easeOut(duration: 0.14), value: state.hovering)
-        .help("拖动设置工期")
-    }
-
-    private func update(to x: CGFloat, width: CGFloat) {
-        let newValue = UILogic.spanFromSliderX(Double(x), width: Double(width))
-        guard newValue != span else { return }
-        // 拖动时不加 withAnimation：滑块要跟手，任何插值都会显得滞后
-        span = newValue
+        .animation(reduceMotion ? nil : Theme.springSnappy, value: isSelected)
     }
 }
+
 final class HoverFlag: ObservableObject {
     @Published var on = false
 }
