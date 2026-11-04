@@ -205,6 +205,18 @@ frameView.layer?.masksToBounds = true
 
 淡出由 SwiftUI 的 `opacity` 负责，**窗口 alpha 恒为 1**。这里踩过坑：一开始用 `NSWindow.animator().alphaValue` 做窗口级淡出，结果球再也不回来——实测把 alpha 设回 1 之后 0.35 秒仍是 0，窗口级 alpha 动画被打断后会停在终值且不再响应赋值。
 
+### 切换桌面时必须收敛状态
+
+三个窗口都带 `.canJoinAllSpaces`，会跟着用户出现在每个桌面。但"展开/折叠"这个状态机只在 `show()` / `hide()` 里推进，Space 切换不会触发它们。
+
+结果是状态错位：在桌面 A 展开面板（球被吸入隐藏），切到桌面 B 时面板跟过来了、球却还是透明的——用户看到"只有面板没有球"。反过来在 B 折叠，回到 A 面板又还在。
+
+修法是监听 `NSWorkspace.activeSpaceDidChangeNotification`，切走时把面板收起、球放出来。Space 不是工作单元的边界，切走就该收工，回来重新召唤。
+
+判断逻辑抽成 `UILogic.shouldCollapseOnSpaceChange`，有 8 种输入组合的穷举测试——只有「面板可见 + 没在收起 + 设置页没开」这一种才该触发。
+
+设置页开着时不收：用户可能正调参数、切桌面是想对比效果。
+
 ### 面板不带阴影
 
 面板既不用系统阴影，也不自己画阴影。
@@ -215,7 +227,7 @@ frameView.layer?.masksToBounds = true
 
 现在靠圆角描边和玻璃本身的明度差与桌面分层，更干净。
 
-悬浮球是另一种情况——它是没有描边的圆形玻璃，需要阴影才有悬浮感，所以它用 `hasShadow = false` + SwiftUI 自绘阴影。两者不冲突。
+悬浮球也不带阴影——它是玻璃球，和桌面直接接触更干净，层次由轮廓高光和内描边表达。
 
 **一个测量陷阱**：`CGWindowListCopyWindowInfo` 报告的窗口尺寸比 AppKit 的 `frame` 小约 2%（600×660 报成 588×648），因为它把阴影排除在外。这次也差点误判成"窗口尺寸不对"，用 `panel.frame` 核实后是 600×660，正常。
 

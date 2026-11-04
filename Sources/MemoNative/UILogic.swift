@@ -128,3 +128,33 @@ struct PriorityBreakdown: Equatable {
         return b
     }
 }
+
+// MARK: - 桌面切换时的状态收敛
+
+extension UILogic {
+    /// 切换桌面时，面板该不该收起。
+    ///
+    /// 三个窗口都带 .canJoinAllSpaces，会跟着用户出现在每个桌面；
+    /// 但"展开/折叠"这个状态机只在 show()/hide() 里推进。
+    /// 切走时如果不收敛，就会出现"面板跟过来了、球却是透明的"——
+    /// 或者"球在 A 桌面、面板在 B 桌面"这种彻底对不上的状态。
+    ///
+    /// - Parameters:
+    ///   - isPanelVisible: 面板窗口当前是否可见
+    ///   - isHiding: 是否正在播收起动画
+    ///   - isSettingsOpen: 设置窗口是否开着
+    static func shouldCollapseOnSpaceChange(
+        isPanelVisible: Bool,
+        isHiding: Bool,
+        isSettingsOpen: Bool
+    ) -> Bool {
+        // 已经在收，别叠加一次
+        guard !isHiding else { return false }
+        // 本来就没展开，没什么可收的
+        guard isPanelVisible else { return false }
+        // 设置页是独立窗口，用户可能正在调参数，
+        // 此时切桌面多半是想对比效果，不该把面板也收掉
+        guard !isSettingsOpen else { return false }
+        return true
+    }
+}

@@ -149,13 +149,8 @@ struct OrbView: View {
                 .mask(Circle().strokeBorder(lineWidth: 2.5))
         )
         .scaleEffect(scale)
-        // 双层阴影：近处紧实的接触阴影 + 远处柔和的投影
-        .shadow(color: .black.opacity(hovering ? 0.16 : 0.10), radius: 2, y: 1)
-        .shadow(
-            color: .black.opacity(hovering ? 0.22 : 0.16),
-            radius: hovering ? 11 : 9,
-            y: hovering ? 5 : 4
-        )
+        // 不画阴影：球是玻璃，和桌面直接接触更干净。
+        // 层次靠轮廓描边（见上方的 rim 高光与内阴影）表达。
         .animation(.spring(response: 0.30, dampingFraction: 0.70), value: hovering)
         .animation(.spring(response: 0.38, dampingFraction: 0.80), value: badge)
         // 吸入用略低的阻尼：允许一点过冲，"鼓一下再收"的弹性才明显
@@ -250,6 +245,7 @@ final class FloatingOrb {
 
     /// 面板据此决定从哪儿展开
     var currentFrame: NSRect? { panel?.frame }
+
 
 
     func configure(store: MemoStore, settings: AppSettings) {

@@ -402,6 +402,36 @@ final class PanelController {
                 }
             }
         })
+
+        // 切换桌面（Space）→ 状态必须收敛到"面板收起、球可见"。
+        //
+        // 三个窗口都带 .canJoinAllSpaces，会跟着用户出现在每个桌面。
+        // 但"展开/折叠"这个状态机只在 show()/hide() 里推进：
+        // 在桌面 A 展开面板（球被吸入隐藏），切到桌面 B 时面板跟过来了、
+        // 球却是透明的——用户看到的是"只有面板没有球"。
+        // 反过来在 B 折叠，回到 A 面板又还在。
+        //
+        // Space 不是工作单元的边界，切走就该收工，回来重新召唤。
+        observers.append(WorkspaceWatcher.shared.onSpaceChange { [weak self] in
+            guard let self, let panel = self.panel else { return }
+            guard UILogic.shouldCollapseOnSpaceChange(
+                isPanelVisible: panel.isVisible,
+                isHiding: self.isHiding,
+                isSettingsOpen: SettingsWindowController.shared.isVisible
+            ) else { return }
+            self.hide(restoreFocus: false)
+        })
+    }
+
+    /// 诊断：在 App 内部触发一次"切桌面"逻辑，用于验证收敛行为。
+    func simulateSpaceChangeForTesting() {
+        guard let panel else { return }
+        let should = UILogic.shouldCollapseOnSpaceChange(
+            isPanelVisible: panel.isVisible,
+            isHiding: isHiding,
+            isSettingsOpen: SettingsWindowController.shared.isVisible
+        )
+        if should { hide(restoreFocus: false) }
     }
 
     private func installEscapeMonitor() {

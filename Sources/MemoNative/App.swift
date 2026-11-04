@@ -86,6 +86,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 PanelController.shared.hide(restoreFocus: false)
             case "orb":
                 FloatingOrb.shared.show()
+            case "simspace":
+                // 诊断：模拟一次桌面切换，验证状态收敛
+                PanelController.shared.simulateSpaceChangeForTesting()
             case "remind":
                 Task { @MainActor in _ = await ReminderService.shared.fireNow(store: store, force: true) }
             default:

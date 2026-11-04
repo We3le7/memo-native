@@ -20,6 +20,7 @@ testSpan()
     testOrbStateResets()
     testUnfoldAnchor()
     testFoldIsInverseOfUnfold()
+    testSpaceChangeCollapse()
     testPriorityBreakdown()
 
 // 1. 排序：日期 → 完成态 → 优先级
@@ -395,6 +396,60 @@ func testFoldIsInverseOfUnfold() {
     check(abs(kt.first!.doubleValue - 0.0) < 0.0001, "关键帧应从 0 开始")
     check(abs(kt.last!.doubleValue - 1.0) < 0.0001, "关键帧应到 1 结束")
     check(kt.count == count, "关键帧数量应与采样点一致")
+}
+
+@MainActor
+
+
+/// 切换桌面时的状态收敛。
+///
+/// 这里的不变量是：切走之后，"面板是否可见"和"球是否可见"必须一致。
+/// 不收敛的话会出现三种错位：
+///   - 面板跟到新桌面，球却是透明的（只剩一个浮窗没有球）
+///   - 球留在旧桌面，面板跟过来了
+///   - 反复切换后状态越来越乱
+func testSpaceChangeCollapse() {
+    // 正常展开状态：该收
+    check(UILogic.shouldCollapseOnSpaceChange(
+        isPanelVisible: true, isHiding: false, isSettingsOpen: false
+    ), "面板展开时切桌面应收起")
+
+    // 正在收：不该叠加第二次
+    check(!UILogic.shouldCollapseOnSpaceChange(
+        isPanelVisible: true, isHiding: true, isSettingsOpen: false
+    ), "正在收起时不该重复触发")
+
+    // 已经收起：没什么可收
+    check(!UILogic.shouldCollapseOnSpaceChange(
+        isPanelVisible: false, isHiding: false, isSettingsOpen: false
+    ), "面板没显示时不该处理")
+
+    // 设置页开着：用户在调参数，切桌面可能是想对比效果
+    check(!UILogic.shouldCollapseOnSpaceChange(
+        isPanelVisible: true, isHiding: false, isSettingsOpen: true
+    ), "设置页开着时不该收起面板")
+
+    // 设置页开着且正在收：同样不处理
+    check(!UILogic.shouldCollapseOnSpaceChange(
+        isPanelVisible: true, isHiding: true, isSettingsOpen: true
+    ), "设置页开着且正在收时不处理")
+
+    // 穷举所有组合：结果必须只由三个输入决定，不能有意外
+    var collapsed = 0
+    for vis in [true, false] {
+        for hiding in [true, false] {
+            for settings in [true, false] {
+                let r = UILogic.shouldCollapseOnSpaceChange(
+                    isPanelVisible: vis, isHiding: hiding, isSettingsOpen: settings)
+                if r { collapsed += 1 }
+                // 只有"可见 + 没在收 + 设置没开"这一种组合该收
+                let expected = vis && !hiding && !settings
+                check(r == expected,
+                      "组合 vis=\(vis) hiding=\(hiding) settings=\(settings) 判断错误")
+            }
+        }
+    }
+    check(collapsed == 1, "8 种组合里只有 1 种应该触发收起")
 }
 
 @MainActor
