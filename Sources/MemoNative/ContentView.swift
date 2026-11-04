@@ -150,14 +150,13 @@ struct ContentView: View {
                 GlassVeil(strength: settings.glassStrength)
             }
             .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-            // 面板阴影画在内容自己身上，而不是交给窗口。
+            // 这里不画阴影。
             //
-            // 窗口的 hasShadow 由窗口服务按**窗口矩形**绘制，不随内容图层的
-            // transform 缩放——展开/折叠时内容缩到 0.06，阴影却保持完整的
-            // 600×660 轮廓留在原地，看起来就是"底下还有一层页面"。
-            // 画在这里，它就跟着容器一起缩放、一起淡出。
-            .shadow(color: .black.opacity(0.16), radius: 18, y: -6)
-            .shadow(color: .black.opacity(0.10), radius: 4, y: -1)
+            // 也不要交回给窗口：NSWindow.hasShadow 由窗口服务按**窗口矩形**
+            // 绘制，不随内容图层的 transform 缩放——展开/折叠时内容缩到 0.06，
+            // 阴影却保持完整的 600×660 轮廓留在原地，看着像"底下还有一层页面"。
+            //
+            // 面板不带阴影，靠圆角描边和玻璃本身的明度差与桌面分层。
         )
         // 玻璃边缘：上沿一点亮、下沿一点暗，模拟光线掠过玻璃厚边。
         // 这是 Apple 系玻璃最有辨识度的一笔——没有它，玻璃就只是一块半透明色块。
