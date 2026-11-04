@@ -893,11 +893,11 @@ func testPaletteContrast() {
         ("urgent", (0.835,0.216,0.239), (0.949,0.361,0.376)),
         ("high",   (0.784,0.396,0.031), (0.973,0.573,0.129)),
         ("normal", (0.639,0.478,0.000), (0.941,0.769,0.208)),
-        ("low",    (0.020,0.541,0.478), (0.157,0.741,0.671)),
+        ("low",    (0.184,0.435,0.929), (0.373,0.596,0.976)),
     ]
-    // 强调色按外观分别取值
-    let accentLight: (Double,Double,Double) = (0.427, 0.247, 0.878)
-    let accentDark:  (Double,Double,Double) = (0.655, 0.545, 0.980)
+    // 强调色按外观分别取值（绿）
+    let accentLight: (Double,Double,Double) = (0.035, 0.424, 0.290)
+    let accentDark:  (Double,Double,Double) = (0.204, 0.827, 0.600)
 
     for (name, light, dark) in palette {
         let lc = UILogic.contrastRatio(light, UILogic.lightPanelBackground)

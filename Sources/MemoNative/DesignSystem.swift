@@ -24,28 +24,31 @@ enum Theme {
     static let inkTertiary = Color.primary.opacity(0.44)
     static let inkQuaternary = Color.primary.opacity(0.24)
 
-    /// 交互强调色：紫罗兰，按外观分别取值。
+    /// 交互强调色：祖母绿，按外观分别取值。
     ///
-    /// 走了三步才定下来，每一步都是实测对比度推翻上一版：
+    /// 迭代过程（每一步都是实测对比度推翻上一版）：
     ///
     ///   蓝 #5C85FA      深色 4.89 / 浅色 3.12   浅色偏弱
-    ///   紫 #8B5CF6      深色 3.94 / 浅色 3.88   深色偏暗（用户反馈看不清）
-    ///   紫 #A78BFA      深色 6.12 / 浅色 —      深色达标
-    ///   紫 #6D3FE0      —       / 浅色 5.60     浅色达标
+    ///   紫 #8B5CF6      深色 3.94 / 浅色 3.88   深色看不清（用户反馈）
+    ///   紫 #A78BFA      深色 6.12 / 浅色 5.60   达标，但用户想换成绿色
+    ///   绿 #34D399      深色 8.65 / 浅色 5.43   采用
     ///
-    /// 关键教训：**只调基色不够**。
+    /// 绿色在两侧都比紫色更宽裕，是这套配色里对比度最高的强调色。
+    ///
+    /// 关键教训（改颜色时一直适用）：**只调基色不够**。
     /// 深色下发闷的真正原因是选中底块只有 13% 不透明度——
     /// 合成后与背景对比仅 1.15，几乎融进背景。
-    /// 所以同时把底块提到 16~22%，并让描边参与勾边（60% 时 ≈3.0）。
+    /// 所以底块必须同步提到 16~22%，描边提到 75%。
     ///
-    /// 深色用偏亮的 #A78BFA：深灰背景上，亮度才是可读性的决定因素。
-    /// 浅色用偏深的 #6D3FE0：白底上深色更清楚。
+    /// 浅色用偏深的 #096C4A：白底上深色更清楚（对比 5.90，
+    /// 压在 16% 底块上仍有 4.66）。
+    /// 深色用偏亮的 #34D399：深灰底上亮度决定可读性。
     static let accent = Color(nsColor: NSColor(name: nil) { appearance in
         let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        // 深色 #A78BFA / 浅色 #6D3FE0
+        // 浅色 #096C4A / 深色 #34D399
         return isDark
-            ? NSColor(srgbRed: 0.655, green: 0.545, blue: 0.980, alpha: 1)
-            : NSColor(srgbRed: 0.427, green: 0.247, blue: 0.878, alpha: 1)
+            ? NSColor(srgbRed: 0.204, green: 0.827, blue: 0.600, alpha: 1)
+            : NSColor(srgbRed: 0.035, green: 0.424, blue: 0.290, alpha: 1)
     })
 
     /// 选中底块：深色背景上淡填充几乎不可见，直接给两套颜色。
@@ -56,8 +59,8 @@ enum Theme {
     static let accentFill = Color(nsColor: NSColor(name: nil) { appearance in
         let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let rgb: (Double, Double, Double) = isDark
-            ? (0.655, 0.545, 0.980)   // 深色：亮紫
-            : (0.427, 0.247, 0.878)   // 浅色：深紫
+            ? (0.204, 0.827, 0.600)   // 深色：亮绿
+            : (0.035, 0.424, 0.290)   // 浅色：深绿
         return NSColor(srgbRed: rgb.0, green: rgb.1, blue: rgb.2,
                        alpha: isDark ? 0.22 : 0.16)
     })
@@ -66,8 +69,8 @@ enum Theme {
     static let accentStroke = Color(nsColor: NSColor(name: nil) { appearance in
         let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let rgb: (Double, Double, Double) = isDark
-            ? (0.655, 0.545, 0.980)
-            : (0.427, 0.247, 0.878)
+            ? (0.204, 0.827, 0.600)
+            : (0.035, 0.424, 0.290)
         // 75% 才能让描边在两种外观下都超过 3.0：
         // 深色 4.04 / 浅色 3.52。低于这个值边界就糊了。
         return NSColor(srgbRed: rgb.0, green: rgb.1, blue: rgb.2,
@@ -131,14 +134,14 @@ extension Priority {
                 dark:  (0.941, 0.769, 0.208)    // #F0C435  深色 8.81
             )
         case .low:
-            // 低优先级：从蓝改为青绿。
+            // 低优先级：蓝。
             //
-            // 强调色已经是紫色，蓝和紫在色环上太近，
-            // 一排控件里会分不清"可交互"和"低优先级"。
-            // 青绿离紫最远，且双模式对比度都过线。
+            // 强调色现在是绿色，如果低优先级还用青绿，两者色距只有 0.12——
+            // 一排控件里根本分不出"可交互"和"低优先级"。
+            // 回到蓝色：与绿色色距 0.47，与红/橙/黄也不冲突。
             return dynamic(
-                light: (0.020, 0.541, 0.478),   // #058A7A  浅色 3.44
-                dark:  (0.157, 0.741, 0.671)    // #28BDB1  深色 6.41
+                light: (0.184, 0.435, 0.929),   // #2F6FED  浅色 4.17
+                dark:  (0.373, 0.596, 0.976)    // #5F98F9  深色 5.82
             )
         }
     }
