@@ -26,6 +26,7 @@ testSpan()
     testFoldSameSpeedAsUnfold()
     testGraceCoversUnfold()
     testGraceResignDeferred()
+    testPriorityDotHitArea()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -738,6 +739,46 @@ func testGraceResignDeferred() {
         }
     }
     check(ignored == 6, "8 种组合里应有 6 种被忽略（不可见或正在收）")
+}
+
+@MainActor
+
+
+/// 优先级色点的命中区。
+///
+/// 原来的色点 6pt，靠 contentShape 外扩 3.5pt 撑到 13pt——
+/// 面积只有 133pt²，用户得瞄着点。
+///
+/// 放大到 8pt 视觉 + 16pt 方形命中帧后是 256pt²，接近翻倍。
+/// 关键是不能靠"继续外扩"来加命中：点间距 13pt、外扩到 18pt
+/// 会重叠 5pt，点两个圆之间时选中哪个是不确定的。
+func testPriorityDotHitArea() {
+    // 视觉尺寸：8pt 是能看清档位色差的下限
+    check(UILogic.dotVisualSize >= 8, "色点视觉直径不应小于 8pt")
+
+    // 命中区必须比视觉大一圈
+    check(UILogic.dotHitFrame > UILogic.dotVisualSize,
+          "命中帧必须大于视觉尺寸")
+
+    // 舒适度：至少 14pt，接近 Apple 建议的 16-20pt 可点尺寸
+    check(UILogic.dotHitIsComfortable, "命中帧不应小于 14pt")
+
+    // 最重要的一条：命中区不能重叠
+    check(!UILogic.dotHitsOverlap,
+          "命中区重叠会导致点到边界时选中错误档位")
+
+    // 相邻命中刚好相接：间距 = 1~2pt
+    check(UILogic.dotHitSpacing >= 1, "命中区之间要留缝")
+    check(UILogic.dotHitSpacing <= 3, "缝隙太大就浪费空间了")
+
+    // 面积翻倍验证
+    let oldArea = Double.pi * pow(6.5, 2)   // 旧的 13pt 圆
+    check(UILogic.dotHitArea > oldArea * 1.5,
+          "新命中面积(\(UILogic.dotHitArea)pt²)应显著大于旧方案(\(Int(oldArea))pt²)")
+
+    // 整组宽度不能太宽，否则挤压右侧日期
+    check(UILogic.dotGroupWidth < 100,
+          "四个色点总宽(\(UILogic.dotGroupWidth)pt)不应超过 100pt")
 }
 
 @MainActor

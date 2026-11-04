@@ -308,3 +308,40 @@ extension UILogic {
         return inGrace ? .deferCheck : .actNow
     }
 }
+
+// MARK: - 优先级色点（悬停时展开的那四个）
+
+extension UILogic {
+    /// 色点视觉直径
+    static let dotVisualSize: Double = 8
+    /// 每格命中帧边长（方形，不可见）
+    static let dotHitFrame: Double = 16
+    /// 相邻命中帧之间的间距
+    static let dotHitSpacing: Double = 2
+
+    /// 相邻两个圆点的圆心距。
+    static var dotPitch: Double { dotHitFrame + dotHitSpacing }
+
+    /// 单个命中的面积。
+    static var dotHitArea: Double { dotHitFrame * dotHitFrame }
+
+    /// 四个色点整组占用的宽度。
+    static var dotGroupWidth: Double {
+        dotHitFrame * 4 + dotHitSpacing * 3
+    }
+
+    /// 命中区是否会互相重叠。
+    ///
+    /// 重叠会让"点在两个圆之间"变成不确定事件——
+    /// 用户以为点的是右边那个，命中却是左边那个。
+    static var dotHitsOverlap: Bool {
+        dotHitFrame > dotPitch
+    }
+
+    /// 命中区是否足够大。
+    ///
+    /// 8pt 的圆直接当按钮太小，要瞄着点。16pt 帧让整格都可点。
+    static var dotHitIsComfortable: Bool {
+        dotHitFrame >= 14
+    }
+}

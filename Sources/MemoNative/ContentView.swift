@@ -1104,7 +1104,20 @@ struct MemoRow: View {
 
                     // 四个色点：当前档位实心，其余空心，点一下即改。
                     if hover.hovering {
-                        HStack(spacing: 3) {
+                        // 每格 16×16 方形命中区，视觉圆点仍是 8pt。
+                        //
+                        // 16pt 帧 + 2pt 间距，圆心距 18pt；
+                        // 视觉间隙 = (16-8)/2*2 + 2 = 10pt？不是——着色只在
+                        // 中间 8pt，所以圆与圆的空白是 2 + 2 + 2 = 6pt，
+                        // 稍微比原来的 3pt 松一点，但换来的命中区大得多：
+                        // 256pt² vs 原来 133pt²，几乎翻倍。
+                        //
+                        // 为什么不用 contentShape(Circle().inset(by:)) 外扩：
+                        // 外扩会让相邻命中区互相重叠（点间距 13pt、
+                        // 外扩后命中直径 18pt，重叠 5pt），
+                        // 点在两个圆之间时选中哪个是不确定的。
+                        // 方形帧 + 1pt 间距刚好相接不重叠，四角也能点。
+                        HStack(spacing: UILogic.dotHitSpacing) {
                             ForEach(Priority.allCases) { level in
                                 Button {
                                     onSetPriority(level)
@@ -1113,20 +1126,29 @@ struct MemoRow: View {
                                         .fill(level == item.priority
                                               ? level.tint
                                               : level.tint.opacity(0.22))
-                                        .frame(width: 6, height: 6)
+                                        .frame(
+                                            width: UILogic.dotVisualSize,
+                                            height: UILogic.dotVisualSize
+                                        )
                                         .overlay(
                                             Circle().strokeBorder(
                                                 level.tint.opacity(level == item.priority ? 0 : 0.5),
-                                                lineWidth: 0.6
+                                                lineWidth: 0.7
                                             )
                                         )
-                                        // 命中区比视觉尺寸大一圈，不用瞄准
-                                        .contentShape(Circle().inset(by: -3.5))
+                                        .frame(
+                                            width: UILogic.dotHitFrame,
+                                            height: UILogic.dotHitFrame
+                                        )
+                                        .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
                                 .help(level.label)
                             }
                         }
+                        // 固定行高：色点放大后不能把整行撑高，
+                        // 否则鼠标移入/移出时列表会跳一下。
+                        .frame(height: 12)
                         .transition(.opacity.combined(with: .move(edge: .leading)))
                     }
                 }
