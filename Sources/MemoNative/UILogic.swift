@@ -274,3 +274,37 @@ extension UILogic {
         revealGraceSeconds > unfoldSeconds
     }
 }
+
+extension UILogic {
+    /// 保护期内收到失焦，该怎么处理。
+    enum GraceResignAction: Equatable {
+        /// 当场按设置收起/下沉
+        case actNow
+        /// 记一笔，等保护期结束再确认
+        case deferCheck
+        /// 直接忽略
+        case ignore
+    }
+
+    /// 判定保护期内的一次失焦事件。
+    ///
+    /// 这里踩过一个坑：最早是"保护期内直接 return"——为了挡住激活过程中
+    /// 系统发来的假失焦。但那样会把**真实切走**也一起吞掉：
+    /// 用户展开面板后 0.7 秒内切到别的 App，面板就不收了，看起来像折叠失败。
+    ///
+    /// 后来改成 deferCheck：保护期内不判，等保护期结束再看一眼
+    /// App 是否真的不在前台。真走了就折，假失焦就忽略。
+    ///
+    /// - Parameters:
+    ///   - inGrace: 是否还在保护期内
+    ///   - isHiding: 是否正在播收起动画
+    ///   - isPanelVisible: 面板是否可见
+    static func graceResignAction(
+        inGrace: Bool,
+        isHiding: Bool,
+        isPanelVisible: Bool
+    ) -> GraceResignAction {
+        guard isPanelVisible, !isHiding else { return .ignore }
+        return inGrace ? .deferCheck : .actNow
+    }
+}

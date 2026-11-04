@@ -96,6 +96,8 @@ final class PanelController {
     /// 用它而不是看时间戳：时间戳只能近似"刚展开"，而这个标记
     /// 精确覆盖"从 show() 开始到动画结束"整段，包括动画被拖慢的情况。
     private var isRevealing = false
+    /// 保护期内收到失焦、正在等待补判。避免重复安排。
+    private var deferredResignPending = false
     private var shownAt: Date = .distantPast
     /// 刚显示后的保护期：系统在启动/切 App 瞬间会连发失焦通知，
     /// 这段时间内的失焦不算“用户主动点了别处”。
@@ -486,20 +488,25 @@ final class PanelController {
             Task { @MainActor in
                 guard let self, let panel = self.panel else { return }
                 guard panel.isVisible else { return }
-                if self.isHiding || self.inRevealGrace {
-                    return
-                }
-                // App 已重新激活时不再执行下沉
-                guard !NSApp.isActive else { return }
-                if panel.attachedSheet != nil { return }
-                // 设置窗口还开着，说明只是焦点在 App 内部转移，不是用户切走了
-                if SettingsWindowController.shared.isVisible { return }
-                switch self.behavior {
-                case .hide:
-                    self.hide(restoreFocus: false)  // 被动收起，绝不把焦点抢回来
-                case .demote:
-                    self.applyLevel(active: false)
-                case .pin:
+                if self.isHiding { return }
+
+                // 保护期内收到的失焦，不能直接丢掉——那会让"展开后马上切走"
+                // 变成折叠失败（用户看到的是面板赖着不走）。
+                //
+                // 也不能当场折——激活过程中系统会发一次假失焦，当场折就是闪烁。
+                //
+                // 正确做法是**延后判定**：记一笔，等保护期结束再确认
+                // App 那时是否真的不在前台。真走了就折，假失焦就忽略。
+                switch UILogic.graceResignAction(
+                    inGrace: self.inRevealGrace,
+                    isHiding: self.isHiding,
+                    isPanelVisible: panel.isVisible
+                ) {
+                case .actNow:
+                    self.performResignAction()
+                case .deferCheck:
+                    self.scheduleDeferredResignCheck()
+                case .ignore:
                     break
                 }
             }
@@ -522,6 +529,45 @@ final class PanelController {
             ) else { return }
             FloatingOrb.shared.syncVisibilityToPanel(panelVisible: panel.isVisible)
         })
+    }
+
+    /// 保护期内收到失焦时的延后判定。
+    ///
+    /// 等到保护期结束那一刻再看一眼：App 还在前台就不管（假失焦），
+    /// 确实不在前台就按设置收起（用户真的切走了）。
+    private func scheduleDeferredResignCheck() {
+        guard !deferredResignPending else { return }
+        deferredResignPending = true
+
+        let remaining = max(0, revealGrace - Date().timeIntervalSince(shownAt))
+        DispatchQueue.main.asyncAfter(deadline: .now() + remaining + 0.02) { [weak self] in
+            guard let self else { return }
+            self.deferredResignPending = false
+            guard let panel = self.panel, panel.isVisible else { return }
+            guard !self.isHiding else { return }
+            // Re-check: still not active?
+            guard !NSApp.isActive else { return }
+            self.performResignAction()
+        }
+    }
+
+    /// 失焦时该做的事：按设置收起或下沉。
+    ///
+    /// 抽出来是因为它有两个入口：立即判定、延后补判。
+    /// 两处的守卫必须完全一致，否则会出现"某条路径漏了检查"。
+    private func performResignAction() {
+        guard let panel, panel.isVisible else { return }
+        guard !NSApp.isActive else { return }
+        if panel.attachedSheet != nil { return }
+        if SettingsWindowController.shared.isVisible { return }
+        switch behavior {
+        case .hide:
+            hide(restoreFocus: false)  // 被动收起，绝不把焦点抢回来
+        case .demote:
+            applyLevel(active: false)
+        case .pin:
+            break
+        }
     }
 
     /// 诊断：在 App 内部触发一次"切桌面"逻辑，用于验证同步行为。

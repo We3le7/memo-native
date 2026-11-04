@@ -25,6 +25,7 @@ testSpan()
     testWindowLevelDuringFold()
     testFoldSameSpeedAsUnfold()
     testGraceCoversUnfold()
+    testGraceResignDeferred()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -689,6 +690,54 @@ func testGraceCoversUnfold() {
     // 与折叠无关：折叠不需要保护期，因为收起本身就是用户意图
     check(UILogic.revealGraceSeconds > UILogic.foldSeconds,
           "保护期也应覆盖折叠时长")
+}
+
+@MainActor
+
+
+/// 保护期内收到失焦，必须延后判定而不是丢弃。
+///
+/// 真出过这个 bug：保护期从 0.35 加到 0.75 之后，
+/// "展开后 0.7 秒内切走"完全不折叠——用户看到的是面板赖着不走。
+///
+/// 原因是最早的写法在保护期内直接 return，把真实切走也吞了。
+/// 现在改成 deferCheck：保护期结束再看一眼 App 是否真的不在前台。
+func testGraceResignDeferred() {
+    // 保护期内：延后判定，不能丢
+    check(UILogic.graceResignAction(inGrace: true, isHiding: false, isPanelVisible: true)
+          == .deferCheck, "保护期内的失焦应延后判定")
+
+    // 保护期外：立即执行
+    check(UILogic.graceResignAction(inGrace: false, isHiding: false, isPanelVisible: true)
+          == .actNow, "保护期外的失焦应立即执行")
+
+    // 正在收起：不重复触发
+    check(UILogic.graceResignAction(inGrace: true, isHiding: true, isPanelVisible: true)
+          == .ignore, "正在收起时不该处理")
+    check(UILogic.graceResignAction(inGrace: false, isHiding: true, isPanelVisible: true)
+          == .ignore, "正在收起时不该处理（保护期外）")
+
+    // 面板不可见：无关
+    check(UILogic.graceResignAction(inGrace: true, isHiding: false, isPanelVisible: false)
+          == .ignore, "面板不可见时不该处理")
+    check(UILogic.graceResignAction(inGrace: false, isHiding: false, isPanelVisible: false)
+          == .ignore, "面板不可见时不该处理（保护期外）")
+
+    // 穷举 8 种组合：绝不能出现 ignore 之外的"丢失"
+    var ignored = 0
+    for g in [true, false] {
+        for h in [true, false] {
+            for v in [true, false] {
+                let a = UILogic.graceResignAction(inGrace: g, isHiding: h, isPanelVisible: v)
+                if a == .ignore { ignored += 1 }
+                // 只要面板可见且没在收，就必须有动作（actNow 或 deferCheck）
+                if v && !h {
+                    check(a != .ignore, "面板可见且空闲时不该忽略失焦")
+                }
+            }
+        }
+    }
+    check(ignored == 6, "8 种组合里应有 6 种被忽略（不可见或正在收）")
 }
 
 @MainActor
