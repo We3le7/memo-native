@@ -17,6 +17,7 @@ testOrbFreePosition()
 testGlassAppearance()
 testSpan()
     testOrbMotion()
+    testPriorityBreakdown()
 
 // 1. 排序：日期 → 完成态 → 优先级
 let base = Memo(id: "x", title: "", priority: .normal, dueDate: "2026-11-05", note: "",
@@ -225,6 +226,54 @@ func testOrbMotion() {
     check(abs(OrbMotion.scale(for: -1) - 1.0) < 0.0001, "负进度应钳到 0")
     check(OrbMotion.scale(for: 2) < 0.6, "超过 1 的进度应钳到 1 的效果")
     check(abs(OrbMotion.opacity(for: -1) - 1.0) < 0.0001, "负进度的透明度应为 1")
+}
+
+@MainActor
+
+/// 悬浮球的分档统计。
+///
+/// 口径错了不会崩，只会安静地骗人：球上写 3，用户以为是 3 件事，
+/// 实际可能把已完成的也算进去了。
+func testPriorityBreakdown() {
+    let today = DateKey.today
+
+    // 全空
+    let empty = PriorityBreakdown.of([])
+    check(empty.total == 0, "空列表总数为 0")
+    check(empty.nonEmpty.isEmpty, "空列表不该有非空档")
+
+    var items: [Memo] = [
+        Memo.make(title: "A", priority: .urgent, dueDate: today),
+        Memo.make(title: "B", priority: .urgent, dueDate: today),
+        Memo.make(title: "C", priority: .high, dueDate: today),
+        Memo.make(title: "D", priority: .normal, dueDate: today),
+        Memo.make(title: "E", priority: .normal, dueDate: today),
+        Memo.make(title: "F", priority: .normal, dueDate: today),
+    ]
+    // 已完成的不该计入——这是最容易写错的一处
+    var finished = Memo.make(title: "G", priority: .low, dueDate: today)
+    finished.done = true
+    items.append(finished)
+
+    let b = PriorityBreakdown.of(items)
+    check(b.urgent == 2, "紧急应计 2")
+    check(b.high == 1, "高应计 1")
+    check(b.normal == 3, "普通应计 3")
+    check(b.low == 0, "已完成的不计入，低应为 0")
+    check(b.total == 6, "总数应只含未完成的 6 件")
+    check(b.total == b.urgent + b.high + b.normal + b.low, "总应等于各档之和")
+
+    // 非空档位按紧急程度降序，空档位不出现
+    let ne = b.nonEmpty
+    check(ne.count == 3, "只有 3 个非空档")
+    check(ne.map(\.priority) == [.urgent, .high, .normal], "应按紧急程度从高到低排列")
+    check(!ne.contains { $0.priority == .low }, "空的低档不该出现在列表里")
+
+    // 只有一档时也只出这一档
+    let single = PriorityBreakdown.of([Memo.make(title: "H", priority: .low, dueDate: today)])
+    check(single.nonEmpty.count == 1, "只有一个低档时应只返回一项")
+    check(single.nonEmpty.first?.priority == .low, "那一项应是最低优先")
+    check(single.total == 1, "总数应为 1")
 }
 
 @MainActor
@@ -458,6 +507,8 @@ func testSpan() {
         check(false, "add 应成功")
     }
     try? FileManager.default.removeItem(at: tmp)
+
+
 
 
 }

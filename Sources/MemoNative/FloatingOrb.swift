@@ -26,9 +26,14 @@ struct OrbView: View {
     var strength: Double = GlassAppearance.defaultStrength
     /// 吸入进度 0…1，展开/收起时由外部驱动
     var collapse: CGFloat = 0
+    /// 按紧急程度分档的待办数，悬停时展示
+    var breakdown = PriorityBreakdown()
 
-    /// 逾期优先展示：逾期是唯一需要立刻处理的状态
-    private var badge: Int { overdue > 0 ? overdue : pending }
+    /// 球上的数字始终是"未完成总数"。
+    ///
+    /// 原来是"有逾期就显示逾期数、否则显示待办数"，同一个位置两种含义，
+    /// 用户看到 3 没法知道是 3 件待办还是 3 件逾期。逾期改由颜色和下方小字表达。
+    private var badge: Int { pending }
     private var isAlerting: Bool { overdue > 0 && !expanded }
 
     /// 悬停时轻微放大，按下时由外层缩回——形成"被按下去"的手感
@@ -179,6 +184,26 @@ struct OrbView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.primary.opacity(0.55))
                 .transition(.scale(scale: 0.7).combined(with: .opacity))
+        } else if hovering && !breakdown.nonEmpty.isEmpty {
+            // 悬停：摊开各紧急程度的件数。
+            //
+            // 球只有 46pt，四行排不下，所以做成一行四组「色点 + 数字」。
+            // 只展示有内容的档位——四档全列会稀释信息，空档位没有阅读价值。
+            HStack(spacing: 5) {
+                ForEach(breakdown.nonEmpty, id: \.priority) { entry in
+                    VStack(spacing: 1) {
+                        Text("\(min(entry.count, 99))")
+                            .font(.system(size: entry.count > 99 ? 7.5 : 9.5,
+                                          weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(entry.priority.tint)
+                        Circle()
+                            .fill(entry.priority.tint)
+                            .frame(width: 3.5, height: 3.5)
+                    }
+                }
+            }
+            .transition(.opacity.combined(with: .scale(scale: 0.85)))
         } else if badge > 0 {
             VStack(spacing: -1) {
                 Text("\(min(badge, 99))")
@@ -451,9 +476,11 @@ final class FloatingOrb {
 
     private func refreshAppearance() {
         guard let store, let hoverState else { return }
-        hoverState.pending = store.stats.pending
-        hoverState.overdue = store.stats.overdue
+        let stats = store.stats
+        hoverState.pending = stats.pending
+        hoverState.overdue = stats.overdue
         hoverState.unread = store.unreadReminderCount
+        hoverState.breakdown = PriorityBreakdown.of(store.items)
     }
 
     // MARK: 位置
@@ -668,6 +695,8 @@ final class OrbHover: ObservableObject {
     @Published var pending = 0
     @Published var overdue = 0
     @Published var unread = 0
+    /// 按紧急程度分档的待办数，悬停时展示
+    @Published var breakdown = PriorityBreakdown()
     /// 玻璃强度，跟随设置
     @Published var strength: Double = GlassAppearance.defaultStrength
     /// 展开时的"吸入"进度：0 = 常态，1 = 完全收进面板。
@@ -691,7 +720,8 @@ struct OrbContent: View {
             expanded: hover.expanded,
             hovering: hover.isHovering,
             strength: hover.strength,
-            collapse: hover.collapse
+            collapse: hover.collapse,
+            breakdown: hover.breakdown
         )
         .frame(width: OrbMetrics.size, height: OrbMetrics.size)
         .fixedSize()

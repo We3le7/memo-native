@@ -88,3 +88,43 @@ enum UILogic {
         String(format: "%02d", value)
     }
 }
+
+// MARK: - 悬浮球的分档统计
+
+/// 按紧急程度统计未完成事项。
+///
+/// 单独抽出来而不是塞进 MemoStore.stats，是为了能测：
+/// 分档口径一旦错了（比如把已完成也算进去），
+/// 球的数字看着正常，实际是在骗人。
+struct PriorityBreakdown: Equatable {
+    var urgent = 0
+    var high = 0
+    var normal = 0
+    var low = 0
+
+    var total: Int { urgent + high + normal + low }
+
+    /// 有内容的档位，按紧急程度从高到低。
+    /// 悬停时只展示这些——四档全列出来，空档位会稀释信息。
+    var nonEmpty: [(priority: Priority, count: Int)] {
+        var out: [(Priority, Int)] = []
+        if urgent > 0 { out.append((.urgent, urgent)) }
+        if high > 0 { out.append((.high, high)) }
+        if normal > 0 { out.append((.normal, normal)) }
+        if low > 0 { out.append((.low, low)) }
+        return out
+    }
+
+    static func of(_ items: [Memo]) -> PriorityBreakdown {
+        var b = PriorityBreakdown()
+        for item in items where !item.done {
+            switch item.priority {
+            case .urgent: b.urgent += 1
+            case .high: b.high += 1
+            case .normal: b.normal += 1
+            case .low: b.low += 1
+            }
+        }
+        return b
+    }
+}
