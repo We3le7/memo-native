@@ -27,6 +27,7 @@ testSpan()
     testGraceCoversUnfold()
     testGraceResignDeferred()
     testPriorityDotHitArea()
+    testPriorityDotCornerRadius()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -779,6 +780,36 @@ func testPriorityDotHitArea() {
     // 整组宽度不能太宽，否则挤压右侧日期
     check(UILogic.dotGroupWidth < 100,
           "四个色点总宽(\(UILogic.dotGroupWidth)pt)不应超过 100pt")
+}
+
+@MainActor
+
+
+/// 色点用圆角矩形而不是正圆。
+///
+/// 四个小圆挤在一起容易看成小圆点；圆角方形更像一排并置的档位块，
+/// 扫视时更容易分辨"这是四个可选项"。
+///
+/// 圆角比例要卡在区间里：
+///   - 太小 → 看着是方块，硬
+///   - 太大 → 退化成圆，白改
+func testPriorityDotCornerRadius() {
+    let r = UILogic.dotCornerRadius
+    let size = UILogic.dotVisualSize
+    let ratio = r / size
+
+    check(r > 0, "圆角必须大于 0，否则就是直角方块")
+
+    // 圆角半径不能达到边长的一半——那正是正圆的定义
+    check(r < size / 2, "圆角达到一半边长就退化成正圆了")
+
+    // 比例区间：20%~40% 是"明显圆角但仍看得出矩形"的范围
+    check(ratio >= 0.20, "圆角比例 \(Int(ratio*100))% 太小，接近方块")
+    check(ratio <= 0.40, "圆角比例 \(Int(ratio*100))% 太大，接近正圆")
+
+    // 8pt 尺寸下 r=2.5 对应 31%，填充率约 91.5%（正圆 78.9%）
+    // 两者差 12 个百分点以上，肉眼能分辨
+    check(ratio > 0.25 && ratio < 0.35, "期望比例落在 25%~35% 之间")
 }
 
 @MainActor

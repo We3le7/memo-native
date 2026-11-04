@@ -1122,20 +1122,31 @@ struct MemoRow: View {
                                 Button {
                                     onSetPriority(level)
                                 } label: {
-                                    Circle()
-                                        .fill(level == item.priority
-                                              ? level.tint
-                                              : level.tint.opacity(0.22))
-                                        .frame(
-                                            width: UILogic.dotVisualSize,
-                                            height: UILogic.dotVisualSize
+                                    // 圆角矩形（连续圆角），不是正圆。
+                                    // 四个小圆挤在一起容易看成小圆点，
+                                    // 圆角方形更像一排并置的档位块，扫视时
+                                    // 更容易分辨"这是四个可选项"。
+                                    RoundedRectangle(
+                                        cornerRadius: UILogic.dotCornerRadius,
+                                        style: .continuous
+                                    )
+                                    .fill(level == item.priority
+                                          ? level.tint
+                                          : level.tint.opacity(0.22))
+                                    .frame(
+                                        width: UILogic.dotVisualSize,
+                                        height: UILogic.dotVisualSize
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(
+                                            cornerRadius: UILogic.dotCornerRadius,
+                                            style: .continuous
                                         )
-                                        .overlay(
-                                            Circle().strokeBorder(
-                                                level.tint.opacity(level == item.priority ? 0 : 0.5),
-                                                lineWidth: 0.7
-                                            )
+                                        .strokeBorder(
+                                            level.tint.opacity(level == item.priority ? 0 : 0.5),
+                                            lineWidth: 0.7
                                         )
+                                    )
                                         .frame(
                                             width: UILogic.dotHitFrame,
                                             height: UILogic.dotHitFrame

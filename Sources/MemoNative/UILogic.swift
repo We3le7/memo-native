@@ -314,6 +314,13 @@ extension UILogic {
 extension UILogic {
     /// 色点视觉直径
     static let dotVisualSize: Double = 8
+    /// 色点圆角半径。
+    ///
+    /// 用圆角矩形而不是正圆：四个小圆挤在一起容易看成小圆点，
+    /// 圆角方形更像一排并置的档位块，扫视时更容易分辨"这是四个可选项"。
+    /// 2.5 / 8 ≈ 31% 圆角，是"明显是圆角、但仍看得出是矩形"的比例。
+    static let dotCornerRadius: Double = 2.5
+
     /// 每格命中帧边长（方形，不可见）
     static let dotHitFrame: Double = 16
     /// 相邻命中帧之间的间距
