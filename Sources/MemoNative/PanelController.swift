@@ -427,7 +427,7 @@ final class HotkeyManager {
 
     private func register(combo: String) {
         let (keyCode, modifiers) = HotkeyManager.parse(combo)
-        var hotKeyID = EventHotKeyID(signature: OSType(0x4D454D4F), id: 1) // 'MEMO'
+        let hotKeyID = EventHotKeyID(signature: OSType(0x4D454D4F), id: 1) // 'MEMO'
         let status = RegisterEventHotKey(
             UInt32(keyCode),
             modifiers,

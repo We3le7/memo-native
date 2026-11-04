@@ -65,6 +65,47 @@ final class AppSettings: ObservableObject {
     }
 }
 
+// MARK: - 设置卡片
+//
+// 用自绘卡片替代 GroupBox：GroupBox 的系统外观和主界面的表面层次不统一，
+// 放在一起像两个时代的界面。
+
+struct SettingCard<Content: View>: View {
+    let title: String
+    let detail: String
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                content()
+            }
+
+            if !detail.isEmpty {
+                Text(detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Theme.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Theme.stroke, lineWidth: Theme.hairline)
+        )
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var store: MemoStore
     @ObservedObject var settings: AppSettings
@@ -76,75 +117,54 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("设置").font(.system(size: 15, weight: .semibold))
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("设置")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                    Text("改动会立即生效")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.inkTertiary)
+                }
                 Spacer()
                 // 顶部关闭：不论窗口多矮、内容多长，这里始终可见
                 IconGlyph(system: "xmark", help: "关闭（Esc）") { onClose() }
             }
+            .padding(.bottom, 2)
 
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("每日提醒时间").font(.system(size: 12))
-                        Spacer()
-                        TimeField(hour: $settings.reminderHour, minute: $settings.reminderMinute)
-                    }
-                    Text("到点后由系统通知中心提醒所有未完成事项，App 未运行也会弹。")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(8)
+            SettingCard(title: "每日提醒", detail: "到点后由系统通知中心提醒所有未完成事项，App 未运行也会弹。") {
+                TimeField(hour: $settings.reminderHour, minute: $settings.reminderMinute)
             }
 
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("全局快捷键").font(.system(size: 12))
-                        Spacer()
-                        Text(settings.hotkey)
-                            .font(.system(size: 12, design: .monospaced))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.08)))
-                    }
-                    Text("在任意 App 里按下即可召唤输入面板。")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(8)
+            SettingCard(title: "全局快捷键", detail: "在任意 App 里按下即可召唤输入面板。") {
+                Text(settings.hotkey)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Theme.surface)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Theme.stroke, lineWidth: Theme.hairline)
+                    )
             }
 
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("点击其他窗口时").font(.system(size: 12))
-                    Picker("", selection: $settings.dismissBehavior) {
-                        ForEach(PanelDismissBehavior.allCases) { option in
-                            Text(option.title).tag(option)
-                        }
+            SettingCard(title: "点击其他窗口时", detail: settings.dismissBehavior.detail) {
+                Picker("", selection: $settings.dismissBehavior) {
+                    ForEach(PanelDismissBehavior.allCases) { option in
+                        Text(option.title).tag(option)
                     }
-                    .pickerStyle(.radioGroup)
-                    .labelsHidden()
-                    Text(settings.dismissBehavior.detail)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
             }
 
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle("显示悬浮球", isOn: $settings.showFloatingOrb)
-                        .font(.system(size: 12))
-                    Text("收起面板后留下一颗圆球，随手点开记录；可拖动到任意位置，会吸附屏幕边缘。")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            SettingCard(title: "悬浮球", detail: "收起面板后留下一颗圆球，随手点开记录；可拖动到任意位置，会吸附屏幕边缘。") {
+                Toggle("显示悬浮球", isOn: $settings.showFloatingOrb)
+                    .font(.system(size: 12))
             }
 
             Toggle("登录时自动启动", isOn: $settings.launchAtLogin)

@@ -18,6 +18,19 @@
 
 ---
 
+## 界面
+
+| 浅色 | 深色 |
+|---|---|
+| ![浅色](docs/preview-light.png) | ![深色](docs/preview-dark.png) |
+
+设置页：
+
+| 浅色 | 深色 |
+|---|---|
+| ![设置浅色](docs/preview-settings-light.png) | ![设置深色](docs/preview-settings-dark.png) |
+
+
 ## 特性
 
 - **随手召唤**：`⌥Space` 全局快捷键 / 菜单栏图标 / 悬浮球 / `memo://` URL
@@ -191,6 +204,7 @@ memo-native/
 │   ├── LaunchAtLogin.swift    登录启动
 │   ├── UILogic.swift          纯函数（时间/日期，可测）
 │   └── Digest.swift           提醒摘要生成
+├── docs/                      界面预览图
 ├── Tests/                     64 项断言
 ├── Resources/                 Info.plist、AppIcon.icns、图标源文件
 └── scripts/

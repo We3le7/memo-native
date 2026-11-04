@@ -8,6 +8,15 @@ import Foundation
 enum UILogic {
 
     /// 顶部时钟文本：时:分:秒，24 小时制
+    /// 标题下的副标题：星期 + 月日，例如「星期二 · 11月4日」
+    static func headerDateText(_ date: Date, timeZone: TimeZone = .current) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.timeZone = timeZone
+        f.dateFormat = "EEEE · M月d日"
+        return f.string(from: date)
+    }
+
     static func clockText(_ date: Date, timeZone: TimeZone = .current) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")

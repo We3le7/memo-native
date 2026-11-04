@@ -2,37 +2,6 @@ import SwiftUI
 import AppKit
 import Combine
 
-// MARK: - 设计基调
-//
-// 目标：简洁、克制、高级。
-// 规则：颜色只用来表达「优先级」；其余全部走灰阶层级（primary/secondary/tertiary/quaternary）。
-//      不用贯穿的分割线，靠留白与字重区分层次；边框只出现在输入框聚焦时。
-
-enum Theme {
-    static let gutter: CGFloat = 18
-    static let radius: CGFloat = 10
-    static let hairline: CGFloat = 0.5
-
-    // 语义灰阶：统一用 Color.primary 叠不同不透明度，
-    // 这样既能适配深浅色，也能在三元表达式里作为具体 Color 参与类型推断
-    // （SwiftUI 的 .tertiary/.quaternary 是 ShapeStyle，不能当 Color 用）。
-    static let ink = Color.primary
-    static let inkSecondary = Color.primary.opacity(0.62)
-    static let inkTertiary = Color.primary.opacity(0.42)
-    static let inkQuaternary = Color.primary.opacity(0.26)
-}
-
-// 优先级配色，与 App 图标里的四个点完全一致
-extension Priority {
-    var tint: Color {
-        switch self {
-        case .urgent: return Color(red: 0.898, green: 0.282, blue: 0.302) // #E5484D
-        case .high:   return Color(red: 0.941, green: 0.506, blue: 0.059) // #F0810F
-        case .normal: return Color(red: 0.851, green: 0.659, blue: 0.000) // #D9A800
-        case .low:    return Color(red: 0.184, green: 0.435, blue: 0.929) // #2F6FED
-        }
-    }
-}
 
 // MARK: - 视图局部状态
 //
@@ -154,7 +123,16 @@ struct ContentView: View {
             footer
         }
         .frame(minWidth: 520, idealWidth: 600, minHeight: 460, idealHeight: 660)
-        .background(VisualEffectBackground())
+        .background(
+            ZStack {
+                VisualEffectBackground()
+                // 顶部一层极淡的着色，让材质不再「灰平」，而是有光源方向
+                LinearGradient(
+                    colors: [Theme.accent.opacity(0.05), .clear],
+                    startPoint: .top, endPoint: .center
+                )
+            }
+        )
         .onAppear {
             ui.customDate = Date()
             ui.startClock()
@@ -197,11 +175,11 @@ struct ContentView: View {
                         .foregroundStyle(Color.accentColor)
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 7)
                 .background(.regularMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: Theme.hairline))
-                .shadow(color: .black.opacity(0.10), radius: 8, y: 3)
+                .overlay(Capsule().strokeBorder(Theme.strokeStrong, lineWidth: Theme.hairline))
+                .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
                 .padding(.bottom, 46)
                 .transition(
                     .asymmetric(
@@ -211,7 +189,7 @@ struct ContentView: View {
                 )
             }
         }
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: ui.toast)
+        .animation(Theme.springSoft, value: ui.toast)
     }
 
     // MARK: 顶部
@@ -221,20 +199,33 @@ struct ContentView: View {
             Image(nsImage: NSApplication.shared.applicationIconImage)
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 20, height: 20)
+                .frame(width: 22, height: 22)
+                .shadow(color: .black.opacity(0.18), radius: 3, y: 1)
 
-            Text("备忘录")
-                .font(.system(size: 13, weight: .semibold))
-                .tracking(0.2)
+            // 标题 + 日期副标题构成一级视觉锚点，而不是孤零零一个词
+            VStack(alignment: .leading, spacing: 1) {
+                Text("备忘录")
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .tracking(0.1)
+                    .foregroundStyle(Theme.ink)
+
+                Text(UILogic.headerDateText(ui.now))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Theme.inkTertiary)
+            }
 
             Spacer()
 
             // 系统时间：静默地作为环境信息，不与内容争抢注意力
             Text(UILogic.clockText(ui.now))
-                .font(.system(size: 11, weight: .regular, design: .monospaced))
-                .foregroundStyle(Theme.inkTertiary)
+                .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                .foregroundStyle(Theme.inkSecondary)
                 .monospacedDigit()
                 .contentTransition(.numericText())
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Theme.surface))
+                .overlay(Capsule().strokeBorder(Theme.stroke, lineWidth: Theme.hairline))
                 .padding(.trailing, 2)
 
             if store.unreadReminderCount > 0 {
@@ -254,35 +245,74 @@ struct ContentView: View {
             IconGlyph(system: "xmark", help: "隐藏（Esc）") { PanelController.shared.hide() }
         }
         .padding(.horizontal, Theme.gutter)
-        .padding(.top, 14)
-        .padding(.bottom, 12)
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: store.unreadReminderCount)
+        .padding(.top, 16)
+        .padding(.bottom, 14)
+        .animation(Theme.springSoft, value: store.unreadReminderCount)
     }
 
     // MARK: 输入区
 
     private var composer: some View {
         VStack(spacing: 10) {
-            // 输入框：默认无边框，聚焦时才浮现一圈极淡的高亮
-            TextField("记点什么…", text: $ui.draft)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14.5))
-                .focused($inputFocused)
-                .onSubmit(commit)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: Theme.radius)
-                        .fill(Color.primary.opacity(inputFocused ? 0.045 : 0.03))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.radius)
-                        .strokeBorder(
-                            inputFocused ? Color.accentColor.opacity(0.45) : Color.clear,
-                            lineWidth: 1
-                        )
-                )
-                .animation(.easeOut(duration: 0.2), value: inputFocused)
+            // 输入框：本界面的视觉重心。
+            // 抬起感来自「浅色底 + 内描边 + 极淡外阴影」三层叠加，
+            // 而不是把边框画重；聚焦时描边转为强调色并加一圈柔光。
+            HStack(spacing: 9) {
+                Image(systemName: "pencil.line")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(inputFocused ? Theme.accent : Theme.inkQuaternary)
+                    .frame(width: 16)
+
+                TextField("记点什么…", text: $ui.draft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14.5, weight: .regular))
+                    .focused($inputFocused)
+                    .onSubmit(commit)
+
+                if !ui.draft.isEmpty {
+                    Button {
+                        withAnimation(Theme.easeFast) { ui.draft = "" }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.inkQuaternary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("清空")
+                    .transition(.scale.combined(with: .opacity))
+                }
+
+                // 回车提示：给「随手记录」一个可发现的出口
+                Text("↵")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(inputFocused && !ui.draft.isEmpty ? Theme.accent : Theme.inkQuaternary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(inputFocused && !ui.draft.isEmpty ? Theme.accent.opacity(0.12) : Color.clear)
+                    )
+            }
+            .padding(.horizontal, 13)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
+                    .fill(inputFocused ? Theme.surfaceRaised : Theme.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
+                    .strokeBorder(
+                        inputFocused ? Theme.accent.opacity(0.55) : Theme.stroke,
+                        lineWidth: inputFocused ? 1.2 : Theme.hairline
+                    )
+            )
+            .shadow(
+                color: inputFocused ? Theme.accent.opacity(0.16) : .black.opacity(0.05),
+                radius: inputFocused ? 9 : 4,
+                y: inputFocused ? 3 : 1
+            )
+            .animation(Theme.springSnappy, value: inputFocused)
+            .animation(Theme.easeFast, value: ui.draft.isEmpty)
 
             // 一行承载：日期 + 优先级。文字优先，颜色只用于优先级圆点。
             HStack(spacing: 0) {
@@ -325,37 +355,45 @@ struct ContentView: View {
             .animation(.spring(response: 0.3, dampingFraction: 0.88), value: ui.dueMode)
         }
         .padding(.horizontal, Theme.gutter)
-        .padding(.bottom, 12)
+        .padding(.bottom, 14)
     }
 
     // MARK: 筛选
 
     private var filterBar: some View {
         HStack(spacing: 0) {
-            HStack(spacing: 14) {
+            // 分段控件读数比下划线更快：底色直接标出「当前在哪一档」
+            HStack(spacing: 2) {
                 ForEach(ComposerState.Filter.allCases) { option in
-                    UnderlineTab(
+                    SegmentTab(
                         title: option.rawValue,
                         selected: ui.filter == option
                     ) {
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                        withAnimation(Theme.springSnappy) {
                             ui.filter = option
                         }
                     }
                 }
             }
+            .padding(2)
+            .background(
+                Capsule().fill(Theme.surface)
+            )
+            .overlay(
+                Capsule().strokeBorder(Theme.stroke, lineWidth: Theme.hairline)
+            )
 
             Spacer(minLength: 8)
 
             Text(summary)
-                .font(.system(size: 10.5))
+                .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
                 .lineLimit(1)
                 .contentTransition(.numericText())
         }
         .padding(.horizontal, Theme.gutter)
-        .padding(.top, 4)
-        .padding(.bottom, 8)
+        .padding(.top, 2)
+        .padding(.bottom, 10)
     }
 
     private var summary: String {
@@ -427,14 +465,32 @@ struct ContentView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 9) {
+        VStack(spacing: 12) {
             Spacer()
-            Image(systemName: ui.filter == .done ? "checkmark" : "tray")
-                .font(.system(size: 22, weight: .ultraLight))
-                .foregroundStyle(Theme.inkQuaternary)
-            Text(ui.filter == .all ? "写下第一件事" : "这里还是空的")
-                .font(.system(size: 11.5))
-                .foregroundStyle(Theme.inkTertiary)
+
+            // 图标放进柔和的圆形底里，比孤零零一个线条更有分量
+            ZStack {
+                Circle()
+                    .fill(Theme.surface)
+                    .frame(width: 54, height: 54)
+                Circle()
+                    .strokeBorder(Theme.stroke, lineWidth: Theme.hairline)
+                    .frame(width: 54, height: 54)
+                Image(systemName: ui.filter == .done ? "checkmark" : "square.and.pencil")
+                    .font(.system(size: 20, weight: .light))
+                    .foregroundStyle(Theme.inkQuaternary)
+            }
+
+            VStack(spacing: 3) {
+                Text(ui.filter == .all ? "写下第一件事" : "这里还是空的")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+
+                Text(ui.filter == .all ? "回车即存，⌥Space 随时召唤" : "换个筛选看看")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.inkQuaternary)
+            }
+
             Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -469,13 +525,15 @@ struct ContentView: View {
                 .help(store.fileURL.path)
         }
         .padding(.horizontal, Theme.gutter)
-        .padding(.top, 8)
-        .padding(.bottom, 11)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Color.primary.opacity(0.05))
-                .frame(height: Theme.hairline)
-        }
+        .padding(.top, 9)
+        .padding(.bottom, 12)
+        .background(
+            // 用渐变收口代替硬分割线：内容向上淡出，而不是被一条线切断
+            LinearGradient(
+                colors: [.clear, Color.primary.opacity(0.022)],
+                startPoint: .top, endPoint: .bottom
+            )
+        )
     }
 
     // MARK: 行为
@@ -609,9 +667,11 @@ struct DotPicker: View {
     }
 }
 
-// MARK: - 下划线标签页（筛选）
+// MARK: - 分段标签（筛选）
+//
+// 比下划线更「可点」：选中有实心胶囊底，眼睛不用去追一根 1.5pt 的线。
 
-struct UnderlineTab: View {
+struct SegmentTab: View {
     let title: String
     let selected: Bool
     let action: () -> Void
@@ -625,24 +685,27 @@ struct UnderlineTab: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 3) {
-                Text(title)
-                    .font(.system(size: 11.5, weight: selected ? .medium : .regular))
-                    .foregroundStyle(selected ? Color.primary : (hover.hovering ? Color.secondary : Theme.inkTertiary))
-
-                Capsule()
-                    .fill(Color.primary.opacity(selected ? 0.55 : 0))
-                    .frame(height: 1.5)
-                    .frame(maxWidth: selected ? .infinity : 0)
-            }
-            .fixedSize(horizontal: true, vertical: false)
-            .contentShape(Rectangle())
+            Text(title)
+                .font(.system(size: 11.5, weight: selected ? .semibold : .regular))
+                .foregroundStyle(
+                    selected ? Theme.ink
+                             : (hover.hovering ? Theme.inkSecondary : Theme.inkTertiary)
+                )
+                .padding(.horizontal, 11)
+                .padding(.vertical, 4.5)
+                .background(
+                    Capsule().fill(selected ? Theme.surfaceRaised : Color.clear)
+                )
+                .overlay(
+                    Capsule().strokeBorder(selected ? Theme.stroke : Color.clear, lineWidth: Theme.hairline)
+                )
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .onHover { inside in
-            withAnimation(.easeOut(duration: 0.13)) { hover.hovering = inside }
+            withAnimation(Theme.easeFast) { hover.hovering = inside }
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.82), value: selected)
+        .animation(Theme.springSnappy, value: selected)
     }
 }
 
@@ -708,28 +771,38 @@ struct GroupHeader: View {
     private var isAlerting: Bool { label.isOverdue && pendingCount > 0 }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 7) {
+            // 逾期分组用一个小圆点做醒目提示，而非整行变色
+            if isAlerting {
+                Circle()
+                    .fill(Priority.urgent.tint)
+                    .frame(width: 4, height: 4)
+            }
+
             Text(Self.display(key))
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
-                .tracking(0.3)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(isAlerting ? Priority.urgent.tint : Theme.inkSecondary)
+                .tracking(0.2)
 
             Text(label.text)
-                .font(.system(size: 9.5, weight: isAlerting ? .medium : .regular))
-                .foregroundStyle(isAlerting ? Priority.urgent.tint : Theme.inkTertiary)
+                .font(.system(size: 9.5, weight: .regular))
+                .foregroundStyle(isAlerting ? Priority.urgent.tint.opacity(0.85) : Theme.inkQuaternary)
 
             Spacer()
 
             if pendingCount > 0 {
                 Text("\(pendingCount)")
-                    .font(.system(size: 9.5, design: .monospaced))
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
                     .foregroundStyle(Theme.inkTertiary)
                     .monospacedDigit()
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Theme.surface))
             }
         }
         .padding(.horizontal, 10)
-        .padding(.top, 12)
-        .padding(.bottom, 4)
+        .padding(.top, 14)
+        .padding(.bottom, 5)
         // pinned header 会被拉伸到滚动区整宽，任何背景都会吃掉左右留白，
         // 所以只画一条极淡的底线来分隔分组。
         .overlay(alignment: .bottom) {
@@ -772,11 +845,28 @@ struct MemoRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
+        HStack(alignment: .top, spacing: 10) {
+            // 勾选圈：悬停时浮现强调色描边，点击有轻微回弹
             Button(action: onToggle) {
-                Image(systemName: item.done ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 14.5, weight: .light))
-                    .foregroundStyle(item.done ? Color.accentColor : Color.primary.opacity(hover.hovering ? 0.35 : 0.20))
+                ZStack {
+                    Circle()
+                        .strokeBorder(
+                            item.done ? Color.clear : (hover.hovering ? Theme.accent.opacity(0.6) : Color.primary.opacity(0.22)),
+                            lineWidth: 1.4
+                        )
+                        .frame(width: 15, height: 15)
+
+                    if item.done {
+                        Circle()
+                            .fill(Theme.accent)
+                            .frame(width: 15, height: 15)
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .frame(width: 17, height: 17)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(item.done ? "标记为未完成" : "标记为已完成")
@@ -793,9 +883,9 @@ struct MemoRow: View {
                         .onAppear { editFocused = true }
                 } else {
                     Text(item.title)
-                        .font(.system(size: 12.5))
-                        .strikethrough(item.done, color: Color.secondary.opacity(0.6))
-                        .foregroundStyle(item.done ? Color.secondary.opacity(0.75) : Color.primary)
+                        .font(.system(size: 13, weight: .regular))
+                        .strikethrough(item.done, color: Color.secondary.opacity(0.55))
+                        .foregroundStyle(item.done ? Theme.inkTertiary : Theme.ink)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                         .contentShape(Rectangle())
@@ -816,22 +906,26 @@ struct MemoRow: View {
             .opacity(hover.hovering ? 1 : 0)
             .animation(.easeOut(duration: 0.14), value: hover.hovering)
 
-            // 优先级色条：唯一常驻的颜色提示，极细
+            // 优先级色条：保留但更细更淡，作为扫视时的纵向线索
             Capsule()
-                .fill(item.done ? Color.clear : item.priority.tint.opacity(0.75))
-                .frame(width: 2)
-                .padding(.vertical, 2)
+                .fill(item.done ? Color.clear : item.priority.tint.opacity(0.55))
+                .frame(width: 2.5)
+                .padding(.vertical, 1)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(hover.hovering ? Color.primary.opacity(0.032) : Color.clear)
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(hover.hovering ? Theme.surfaceHover : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(hover.hovering ? Theme.stroke : Color.clear, lineWidth: Theme.hairline)
         )
         .padding(.horizontal, 2)
-        .opacity(item.done ? 0.6 : 1)
+        .opacity(item.done ? 0.62 : 1)
         .onHover { inside in
-            withAnimation(.easeOut(duration: 0.14)) { hover.hovering = inside }
+            withAnimation(Theme.easeFast) { hover.hovering = inside }
         }
         .contextMenu {
             Button(item.done ? "标记为未完成" : "标记为已完成", action: onToggle)
@@ -845,29 +939,42 @@ struct MemoRow: View {
         }
     }
 
-    /// 元信息：优先级圆点 · 日期 · 记录时间。
-    /// 用 inkTertiary 而不是 quaternary —— 后者在深色下仅 2:1，读起来太吃力。
+    /// 元信息：优先级标签 · 日期 · 记录时间。
+    ///
+    /// 优先级从「4pt 小圆点」改成带底色的胶囊 —— 圆点只够区分色相，
+    /// 胶囊能同时读出颜色和文字，扫一眼就知道轻重缓急。
+    /// 文字用 inkTertiary 而不是 quaternary：后者在深色下仅 2:1，读起来太吃力。
     private var metaLine: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(item.priority.tint.opacity(item.done ? 0.35 : 0.9))
-                .frame(width: 4, height: 4)
+        HStack(spacing: 6) {
+            if !item.done {
+                Text(item.priority.label)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(item.priority.tint)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1.5)
+                    .background(
+                        Capsule().fill(item.priority.tint.opacity(0.12))
+                    )
+                    .overlay(
+                        Capsule().strokeBorder(item.priority.tint.opacity(0.18), lineWidth: Theme.hairline)
+                    )
+            }
 
             Text(item.dueLabel.text)
-                .font(.system(size: 9.5, weight: item.dueLabel.isOverdue && !item.done ? .medium : .regular))
+                .font(.system(size: 9.5, weight: item.dueLabel.isOverdue && !item.done ? .semibold : .regular))
                 .foregroundStyle(
                     item.dueLabel.isOverdue && !item.done
-                        ? Priority.urgent.tint.opacity(0.9)
+                        ? Priority.urgent.tint
                         : Theme.inkTertiary
                 )
 
             if let created = UILogic.createdTimeText(item.createdAt) {
                 Text("·")
                     .font(.system(size: 9.5))
-                    .foregroundStyle(Theme.inkTertiary.opacity(0.7))
+                    .foregroundStyle(Theme.inkQuaternary)
                 Text(created)
                     .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundStyle(Theme.inkTertiary.opacity(0.7))
+                    .foregroundStyle(Theme.inkTertiary)
                     .monospacedDigit()
             }
 

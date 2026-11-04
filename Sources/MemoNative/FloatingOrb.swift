@@ -198,7 +198,8 @@ final class FloatingOrb {
     }
 
     private func buildIfNeeded() {
-        guard panel == nil, let store else { return }
+        // store 只在宿主视图里通过环境注入，这里只需确认已配置
+        guard panel == nil, store != nil else { return }
         let hover = OrbHover()
         hoverState = hover
 
