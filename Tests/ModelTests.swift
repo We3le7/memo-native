@@ -893,7 +893,7 @@ func testPaletteContrast() {
         ("urgent", (0.835,0.216,0.239), (0.949,0.361,0.376)),
         ("high",   (0.784,0.396,0.031), (0.973,0.573,0.129)),
         ("normal", (0.639,0.478,0.000), (0.941,0.769,0.208)),
-        ("low",    (0.184,0.435,0.929), (0.373,0.596,0.976)),
+        ("low",    (0.082,0.502,0.239), (0.290,0.871,0.502)),
     ]
     // 强调色按外观分别取值（绿）
     let accentLight: (Double,Double,Double) = (0.035, 0.424, 0.290)
@@ -936,13 +936,33 @@ func testPaletteContrast() {
               "\(mode) 选中描边应 ≥3.0，否则边界会糊")
     }
 
-    // 强调色不能和任何优先级的色相相同——否则界面里
-    // "可交互"和"某档优先级"会撞色
+    // 强调色与优先级色的距离。
+    //
+    // low 是有意的例外：它和强调色同属绿色系（色距 ~0.10）。
+    // 两者不会同时出现在一处——输入区已改成纯中性色，
+    // 强调色只用于"已完成勾选圈"（行首）和设置页，
+    // 优先级圆点在行尾，隔着整行内容。
+    // 其余三档必须离强调色足够远。
     for (name, light, _) in palette {
         let dist = pow(pow(accentLight.0 - light.0, 2)
                      + pow(accentLight.1 - light.1, 2)
                      + pow(accentLight.2 - light.2, 2), 0.5)
-        check(dist > 0.5, "强调色与 \(name) 太接近（距离 \(String(format: "%.2f", dist))）")
+        if name == "low" {
+            // 有意接近：只要不与红/橙/黄混淆即可，在下面单独校验
+            check(dist < 0.30, "low 应接近强调色（同绿色系），实测 \(String(format: "%.2f", dist))")
+        } else {
+            check(dist > 0.5, "强调色与 \(name) 应 >0.5 可区分，实测 \(String(format: "%.2f", dist))")
+        }
+    }
+
+    // 低优先级虽与强调色相近，但必须和另外三档分得开——
+    // 四档并排时，用户靠的是彼此差异而不是绝对色值。
+    let low = palette.first { $0.0 == "low" }!
+    for (name, light, _) in palette where name != "low" {
+        let dist = pow(pow(low.1.0 - light.0, 2)
+                     + pow(low.1.1 - light.1, 2)
+                     + pow(low.1.2 - light.2, 2), 0.5)
+        check(dist > 0.45, "low 与 \(name) 应 >0.45 可区分，实测 \(String(format: "%.2f", dist))")
     }
 }
 
