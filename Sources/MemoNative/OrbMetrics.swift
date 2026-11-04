@@ -20,6 +20,50 @@ enum OrbMetrics {
 
     /// 窗口每边比球体多出的留白（阴影与光晕用掉的空间）
     static var bleed: CGFloat { (size - bubble) / 2 }
-    /// 吸附到屏幕边缘时的内缩
+    /// 默认摆放位置距屏幕边缘的内缩（只用于首次定位，不用于拖拽）
     static let snapInset: CGFloat = 12
+}
+
+// MARK: - 位置计算（纯函数，可单测）
+
+/// 悬浮球的位置规则。
+///
+/// 设计决定：**不做边缘吸附**。用户把球拖到哪，它就停在哪，
+/// 只保证整颗球不会跑出屏幕之外（否则就再也抓不到了）。
+///
+/// 没有做成 FloatingOrb 的私有方法，是因为它需要被单元测试覆盖：
+/// 拖拽是纯几何计算，出错的代价是「球丢了」，必须能验证。
+enum OrbLayout {
+    /// 把球约束回可见区域。
+    ///
+    /// - 若球中心落在某块屏内，就约束到那块屏（支持多屏自由移动）
+    /// - 否则找最近的屏幕兜底
+    /// - 任何情况下都保证球完整可见，不会被截掉一半
+    static func clamp(origin: CGPoint, size: CGSize, screens: [CGRect]) -> CGPoint {
+        guard !screens.isEmpty else { return origin }
+
+        let center = CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
+        let target = screens.first { $0.contains(center) }
+            ?? screens.min(by: { distanceSquared(from: center, to: $0) < distanceSquared(from: center, to: $1) })
+            ?? screens[0]
+
+        // 允许球略微贴边，但不能整颗出去
+        let inset: CGFloat = 0
+        let minX = target.minX + inset
+        let minY = target.minY + inset
+        let maxX = target.maxX - size.width - inset
+        let maxY = target.maxY - size.height - inset
+
+        return CGPoint(
+            x: maxX >= minX ? min(max(origin.x, minX), maxX) : minX,
+            y: maxY >= minY ? min(max(origin.y, minY), maxY) : minY
+        )
+    }
+
+    /// 点到矩形的最短距离平方（用于挑选最近的屏幕）
+    private static func distanceSquared(from p: CGPoint, to r: CGRect) -> CGFloat {
+        let dx = max(r.minX - p.x, 0, p.x - r.maxX)
+        let dy = max(r.minY - p.y, 0, p.y - r.maxY)
+        return dx * dx + dy * dy
+    }
 }

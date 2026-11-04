@@ -439,36 +439,17 @@ final class FloatingOrb {
             dragOrigin = nil
             didDrag = false
         }
-        // 拖动结束后吸附到最近的屏幕边缘，避免悬在奇怪的位置
-        snapToEdge(panel)
-        savePosition()
-    }
-
-    private func snapToEdge(_ panel: NSPanel) {
-        let size = panel.frame.size
-        var origin = panel.frame.origin
-        let center = NSPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(center) })
-                ?? NSScreen.main ?? NSScreen.screens.first else { return }
-        let visible = screen.visibleFrame
-
-        let inset = OrbMetrics.snapInset
-        // 水平：靠左或靠右
-        let distLeft = abs(origin.x - visible.minX)
-        let distRight = abs(visible.maxX - (origin.x + size.width))
-        if distLeft < distRight {
-            origin.x = visible.minX + inset
-        } else {
-            origin.x = visible.maxX - size.width - inset
+        // 不再吸附边缘：拖到哪就停在哪，只保证整颗球留在屏幕可见区内。
+        // （原来的 snapToEdge 会把 x 强制推到最左/最右，无法自由摆放。）
+        let clamped = OrbLayout.clamp(
+            origin: panel.frame.origin,
+            size: panel.frame.size,
+            screens: NSScreen.screens.map { $0.visibleFrame }
+        )
+        if clamped != panel.frame.origin {
+            panel.setFrameOrigin(clamped)
         }
-
-        // 垂直：夹取在可见区内，留出 Dock 与菜单栏
-        let minY = visible.minY + inset
-        let maxY = visible.maxY - size.height - inset
-        origin.y = maxY >= minY ? min(origin.y, maxY) : minY
-        origin.y = max(minY, origin.y)
-
-        panel.setFrameOrigin(origin)
+        savePosition()
     }
 }
 

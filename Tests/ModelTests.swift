@@ -13,6 +13,7 @@ print("ModelTests")
 testOrbMetrics()
 testCorruptedFileProtection()
 testUndoDelete()
+testOrbFreePosition()
 
 // 1. 排序：日期 → 完成态 → 优先级
 let base = Memo(id: "x", title: "", priority: .normal, dueDate: "2026-11-05", note: "",
@@ -166,12 +167,14 @@ func testOrbMetrics() {
     check(OrbMetrics.size > OrbMetrics.bubble, "球窗口应大于气泡，给阴影留空间")
     check(OrbMetrics.size - OrbMetrics.bubble >= 4, "阴影至少留 2pt 四边")
     check(OrbMetrics.gap > 0, "球与面板之间需要有间距")
-    check(OrbMetrics.snapInset >= 8, "吸附边缘时不要贴死")
+    // 留白要够：窗口必须能完整容纳阴影，否则边缘会被切出方形暗边
+    check(OrbMetrics.bleed >= 12, "窗口每边留白至少要盖住阴影扩散半径")
+    check(OrbMetrics.size - OrbMetrics.bubble == OrbMetrics.bleed * 2, "留白应左右对称")
 
-    // 吸附逻辑：球应完全落在可见区内
+    // 默认位置：球应完全落在可见区内
     let visible = NSRect(x: 0, y: 82, width: 1470, height: 841)
     let size = NSSize(width: OrbMetrics.size, height: OrbMetrics.size)
-    var origin = NSPoint(x: visible.maxX - size.width - OrbMetrics.snapInset,
+    let origin = NSPoint(x: visible.maxX - size.width - OrbMetrics.snapInset,
                          y: visible.maxY - size.height - OrbMetrics.snapInset - 40)
     let rect = NSRect(origin: origin, size: size)
     check(visible.contains(rect), "默认位置应完整落在可见区内")
@@ -241,5 +244,57 @@ func testUndoDelete() {
     check(store.items.count == 2, "撤销清理后恢复")
 
     check(store.delete("不存在") == nil, "删除不存在 id 返回 nil")
+}
+
+/// 悬浮球位置：不再吸附边缘，但必须留在可见区内。
+/// 这是纯几何，出错代价是「球丢了抓不回来」，必须覆盖。
+
+func testOrbFreePosition() {
+    let size = CGSize(width: 80, height: 80)
+    // 模拟主屏 1470x956，可见区 y 从 78 到 923（上方菜单栏、下方 Dock）
+    let main = CGRect(x: 0, y: 78, width: 1470, height: 845)
+    let screens = [main]
+
+    // 1. 屏幕正中央 → 原样保留（这是"自由摆放"的核心要求）
+    let center = CGPoint(x: 600, y: 400)
+    check(OrbLayout.clamp(origin: center, size: size, screens: screens) == center,
+          "屏幕中间的位置必须原样保留")
+
+    // 2. 不再被吸附到左右边缘
+    let nearLeft = CGPoint(x: 40, y: 400)
+    check(OrbLayout.clamp(origin: nearLeft, size: size, screens: screens).x == 40,
+          "靠近左边缘但不越界时，不应被吸到边缘")
+
+    let nearRight = CGPoint(x: 1300, y: 400)
+    check(OrbLayout.clamp(origin: nearRight, size: size, screens: screens).x == 1300,
+          "靠近右边缘但不越界时，不应被吸到边缘")
+
+    // 3. 越界必须拉回来（否则球会跑到屏幕外）
+    let offLeft = CGPoint(x: -200, y: 400)
+    check(OrbLayout.clamp(origin: offLeft, size: size, screens: screens).x == 0,
+          "跑出左边界要被拉回")
+
+    let offRight = CGPoint(x: 2000, y: 400)
+    let clampedRight = OrbLayout.clamp(origin: offRight, size: size, screens: screens)
+    check(clampedRight.x == 1470 - 80, "跑出右边界要被拉回到刚好贴边")
+
+    let offBottom = CGPoint(x: 600, y: -500)
+    check(OrbLayout.clamp(origin: offBottom, size: size, screens: screens).y == 78,
+          "跑到 Dock 区域下要被拉回可见区")
+
+    let offTop = CGPoint(x: 600, y: 2000)
+    let clampedTop = OrbLayout.clamp(origin: offTop, size: size, screens: screens)
+    check(clampedTop.y == 845 + 78 - 80, "跑到菜单栏上方要被拉回")
+
+    // 4. 多屏：球中心在副屏上时应留在副屏，而不是被拽回主屏
+    let secondary = CGRect(x: -251, y: 956, width: 1920, height: 1080)
+    let twoScreens = [main, secondary]
+    let onSecondary = CGPoint(x: 100, y: 1500)
+    check(OrbLayout.clamp(origin: onSecondary, size: size, screens: twoScreens) == onSecondary,
+          "在多块屏幕之间应能自由移动，不被拽回主屏")
+
+    // 5. 空屏幕列表不应崩溃（极端兜底）
+    let safe = OrbLayout.clamp(origin: center, size: size, screens: [])
+    check(safe == center, "没有屏幕信息时原样返回，不崩溃")
 }
 
