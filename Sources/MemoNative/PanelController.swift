@@ -164,10 +164,6 @@ final class PanelController {
             withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
                 self.unfold.progress = 1
             }
-            if ProcessInfo.processInfo.environment["MEMO_DEBUG"] != nil {
-                FileHandle.standardError.write(
-                    "AFTER_SHOW visible=\(panel.isVisible) alpha=\(panel.alphaValue) progress=\(self.unfold.progress)\n".data(using: .utf8)!)
-            }
             // 兜底：spring 有时会在恢复了 key window / 触发重排之后
             // 停在中间值（实测卡在 0.857），面板就永远是 588×648 而不是 600×660。
             // 动画时长过后直接把终值钉死，保证最终状态是确定的。
@@ -222,6 +218,24 @@ final class PanelController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.contentView = hosting
+
+        // 窗口本体裁圆角。
+        //
+        // SwiftUI 的 clipShape 对这层没用：VisualEffectView 是 AppKit view，
+        // 铺满整个宿主矩形，SwiftUI 的裁切作用不到它的渲染层，
+        // 实测四角仍然全不透明。
+        //
+        // 也不能直接给 hosting.layer 加 masksToBounds：那样会把内容按
+        // contentLayoutRect 布局，顶部 32pt（标题栏高度）被判为界外裁掉，
+        // 实测内容从 y=32pt 才开始，面板顶部缺一条。
+        //
+        // 正确位置是窗口的 frameView——它覆盖整个窗口矩形、不含标题栏偏移。
+        if let frameView = panel.contentView?.superview {
+            frameView.wantsLayer = true
+            frameView.layer?.cornerRadius = Theme.radius
+            frameView.layer?.cornerCurve = .continuous
+            frameView.layer?.masksToBounds = true
+        }
         panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
@@ -278,10 +292,6 @@ final class PanelController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
             guard let self else { return }
             target.orderOut(nil)
-            if ProcessInfo.processInfo.environment["MEMO_DEBUG"] != nil {
-                FileHandle.standardError.write(
-                    "AFTER_HIDE visible=\(target.isVisible) progress=\(self.unfold.progress)\n".data(using: .utf8)!)
-            }
             self.unfold.progress = 1
             FloatingOrb.shared.setExpanded(false)
             self.isHiding = false

@@ -143,11 +143,18 @@ struct ContentView: View {
             anchor: unfold.anchor
         )
         .opacity(0.15 + 0.85 * Double(unfold.progress))
+        // 背景层必须裁成圆角。
+        //
+        // 之前只在上面画了一圈 12pt 的描边，窗口本身仍是矩形：
+        // VisualEffectView 铺满整个窗口矩形，四角就露出直角玻璃，
+        // 描边只是浮在直角上方的一条弧线，看起来像"方框套了个圆弧"。
+        // clipShape 把背景真正裁出来，四角才是真的弧。
         .background(
             ZStack {
                 VisualEffectBackground(settings: settings)
                 GlassVeil(strength: settings.glassStrength)
             }
+            .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
         )
         // 玻璃边缘：上沿一点亮、下沿一点暗，模拟光线掠过玻璃厚边。
         // 这是 Apple 系玻璃最有辨识度的一笔——没有它，玻璃就只是一块半透明色块。

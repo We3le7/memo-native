@@ -66,7 +66,7 @@ final class SettingsWindowController {
         hosting.translatesAutoresizingMaskIntoConstraints = false
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 430, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 430, height: 596),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false

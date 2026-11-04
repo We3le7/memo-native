@@ -109,6 +109,35 @@ open /Applications/MemoNative.app
 
 **开关**：设置 → 显示悬浮球。
 
+### 窗口圆角
+
+面板四角是 12pt 连续曲率圆角，跟系统面板一致。
+
+这里有个容易踩的坑：**SwiftUI 的 `clipShape` 裁不动玻璃**。`VisualEffectView` 是 AppKit view，会铺满整个宿主矩形，SwiftUI 的裁切作用不到它的渲染层——实测四角仍然全不透明，只是上面叠了一条圆弧描边，看起来像"方框套了个弧"。
+
+真正的做法是给窗口的 `frameView` 加 layer 遮罩：
+
+```swift
+frameView.wantsLayer = true
+frameView.layer?.cornerRadius = 12
+frameView.layer?.cornerCurve = .continuous
+frameView.layer?.masksToBounds = true
+```
+
+不能直接给 `contentView` 加：那样会按 `contentLayoutRect` 布局，顶部 32pt（标题栏高度）被判为界外裁掉。
+
+验证方式也有讲究：`screencapture -R` 抓的是屏幕合成结果，测不出窗口形状；`screencapture -l <id>` 才是窗口自己的内容。实测圆弧从 y=32pt 的 10.5pt 收敛到 y=40pt 的 0.5pt，跨度正好 12pt。
+
+### 设置页
+
+分成三组：**外观 / 行为 / 数据**。
+
+之前是 6 张卡片 + 2 个裸 Toggle 平铺下来，一屏 10 个同权重的项，找不到东西。现在：
+
+- 每组有小标题（大写、字距拉开）
+- 内容区可滚动，标题栏和操作栏固定——内容变长后关闭按钮和「完成」仍然在视野里
+- 两个开关和文件路径合并进卡片，不再各自漂浮
+
 ### 工期：一件事要占用几天
 
 默认 1 天（当天到期）。设成 5 天，就是从起始日算起 5 天内都不算逾期，**不会"过一天就逾期"**。

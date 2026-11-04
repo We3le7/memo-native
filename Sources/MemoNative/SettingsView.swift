@@ -91,11 +91,16 @@ struct SettingCard<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                Spacer(minLength: 8)
+            if !title.isEmpty {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                    Spacer(minLength: 8)
+                    content()
+                }
+            } else {
+                // 无标题模式：内容自己撑满整张卡片
                 content()
             }
 
@@ -120,6 +125,21 @@ struct SettingCard<Content: View>: View {
     }
 }
 
+/// 分组小标题：把设置项归到"外观 / 行为 / 数据"三类，
+/// 一屏铺 10 个同权重的卡片时，用户找不到东西。
+struct SectionHeader: View {
+    let title: String
+    var body: some View {
+        Text(title)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(Theme.inkTertiary)
+            .textCase(.uppercase)
+            .kerning(0.6)
+            .padding(.leading, 2)
+            .padding(.top, 6)
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var store: MemoStore
     @ObservedObject var settings: AppSettings
@@ -129,111 +149,158 @@ struct SettingsView: View {
     /// 打开时的快照：取消时用它回滚，避免「改了就生效、关不掉」的窘境
     @StateObject private var snapshot = SettingsSnapshot()
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("设置")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
-                    Text("改动会立即生效")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Theme.inkTertiary)
-                }
-                Spacer()
-                // 顶部关闭：不论窗口多矮、内容多长，这里始终可见
-                IconGlyph(system: "xmark", help: "关闭（Esc）") { onClose() }
-            }
-            .padding(.bottom, 2)
-
-            SettingCard(title: "玻璃效果", detail: "调整面板与悬浮球的通透程度。越往右，背后的内容越容易透上来。") {
-                GlassStrengthField(strength: $settings.glassStrength)
-            }
-
-            SettingCard(title: "每日提醒", detail: "到点后由系统通知中心提醒所有未完成事项，App 未运行也会弹。") {
-                TimeField(hour: $settings.reminderHour, minute: $settings.reminderMinute)
-            }
-
-            SettingCard(title: "全局快捷键", detail: "在任意 App 里按下即可召唤输入面板。") {
-                Text(settings.hotkey)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Theme.inkSecondary)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Theme.surface)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(Theme.stroke, lineWidth: Theme.hairline)
-                    )
-            }
-
-            SettingCard(title: "点击其他窗口时", detail: settings.dismissBehavior.detail) {
-                Picker("", selection: $settings.dismissBehavior) {
-                    ForEach(PanelDismissBehavior.allCases) { option in
-                        Text(option.title).tag(option)
-                    }
-                }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
-            }
-
-            SettingCard(title: "悬浮球", detail: "收起面板后留下一颗圆球，随手点开记录；可拖动到任意位置，会吸附屏幕边缘。") {
-                Toggle("显示悬浮球", isOn: $settings.showFloatingOrb)
-                    .font(.system(size: 12))
-            }
-
-            Toggle("登录时自动启动", isOn: $settings.launchAtLogin)
-                .font(.system(size: 12))
-            Toggle("在菜单栏显示图标", isOn: $settings.showInMenuBar)
-                .font(.system(size: 12))
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("数据文件").font(.system(size: 11, weight: .medium))
-                Text(store.fileURL.path)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .lineLimit(2)
-                HStack {
-                    Button("在访达中显示") {
-                        NSWorkspace.shared.activateFileViewerSelecting([store.fileURL])
-                    }
-                    .font(.system(size: 11))
-                    Button("重新载入") { store.load() }
-                        .font(.system(size: 11))
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            HStack(spacing: 10) {
-                Button("恢复默认") { restoreDefaults() }
-                    .font(.system(size: 11))
-                    .buttonStyle(.plain)
+    /// 顶部标题区：固定的，不随内容滚动
+    private var header: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("设置")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                Text("改动会立即生效")
+                    .font(.system(size: 10.5))
                     .foregroundStyle(Theme.inkTertiary)
-
-                Spacer()
-
-                // 取消 = 回滚到打开时的状态并关闭
-                Button("取消") {
-                    snapshot.apply(to: settings)
-                    onClose()
-                }
-                .font(.system(size: 11))
-                .keyboardShortcut(.cancelAction)
-
-                Button("完成") { onClose() }
-                    .font(.system(size: 11))
-                    .keyboardShortcut(.defaultAction)
             }
+            Spacer()
+            IconGlyph(system: "xmark", help: "关闭（Esc）") { onClose() }
         }
-        .padding(20)
-        .frame(width: 430, height: 560)
+    }
+
+    /// 底部操作区：固定，不随内容滚动
+    private var footer: some View {
+        HStack(spacing: 10) {
+            Button("恢复默认") { restoreDefaults() }
+                .font(.system(size: 11))
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.inkTertiary)
+
+            Spacer()
+
+            Button("取消") {
+                snapshot.apply(to: settings)
+                onClose()
+            }
+            .font(.system(size: 11))
+            .keyboardShortcut(.cancelAction)
+
+            Button("完成") { onClose() }
+                .font(.system(size: 11))
+                .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // 标题栏固定在顶部，不随内容滚动——
+            // 内容变长后关闭按钮还在视野里，不用滚到顶才能退出。
+            header
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 12)
+
+            Divider().opacity(0.5)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 9) {
+                    SectionHeader(title: "外观")
+                    SettingCard(
+                        title: "玻璃效果",
+                        detail: "调整面板与悬浮球的通透程度。越往右，背后的内容越容易透上来。"
+                    ) {
+                        GlassStrengthField(strength: $settings.glassStrength)
+                    }
+                    SettingCard(
+                        title: "悬浮球",
+                        detail: "收起面板后留下一颗圆球，随手点开记录。可拖到屏幕上任意位置，不会被吸回边缘。"
+                    ) {
+                        Toggle("显示", isOn: $settings.showFloatingOrb)
+                            .font(.system(size: 11.5))
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                            .labelsHidden()
+                    }
+
+                    SectionHeader(title: "行为")
+                    SettingCard(
+                        title: "每日提醒",
+                        detail: "到点后由系统通知中心提醒所有未完成事项，App 未运行也会弹。"
+                    ) {
+                        TimeField(hour: $settings.reminderHour, minute: $settings.reminderMinute)
+                    }
+                    SettingCard(
+                        title: "点击其他窗口时",
+                        detail: settings.dismissBehavior.detail
+                    ) {
+                        Picker("", selection: $settings.dismissBehavior) {
+                            ForEach(PanelDismissBehavior.allCases) { option in
+                                Text(option.title).tag(option)
+                            }
+                        }
+                        .pickerStyle(.radioGroup)
+                        .labelsHidden()
+                    }
+                    SettingCard(
+                        title: "全局快捷键",
+                        detail: "在任意 App 里按下即可召唤输入面板。"
+                    ) {
+                        Text(settings.hotkey)
+                            .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Theme.inkSecondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(
+                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    .fill(Theme.surface)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    .strokeBorder(Theme.stroke, lineWidth: Theme.hairline)
+                            )
+                    }
+
+                    // 两个开关合并进一张卡片，不再各自裸奔。
+                    // 原来它们夹在悬浮球下面，看不出属于哪一组。
+                    SettingCard(title: "", detail: "") {
+                        VStack(alignment: .leading, spacing: 11) {
+                            Toggle("登录时自动启动", isOn: $settings.launchAtLogin)
+                                .font(.system(size: 12))
+                            Toggle("在菜单栏显示图标", isOn: $settings.showInMenuBar)
+                                .font(.system(size: 12))
+                        }
+                    }
+
+                    SectionHeader(title: "数据")
+                    SettingCard(title: "", detail: "") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(store.fileURL.path)
+                                .font(.system(size: 9.5, design: .monospaced))
+                                .foregroundStyle(Theme.inkTertiary)
+                                .textSelection(.enabled)
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                            HStack(spacing: 8) {
+                                QuietButton(title: "在访达中显示") {
+                                    NSWorkspace.shared.activateFileViewerSelecting([store.fileURL])
+                                }
+                                QuietButton(title: "重新载入") {
+                                    store.load()
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 16)
+            }
+
+            Divider().opacity(0.5)
+
+            // 操作栏固定底部，与标题栏一起夹住可滚动的中间区。
+            footer
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+        }
+        .frame(width: 430, height: 596)
         .onAppear { snapshot.capture(from: settings) }
         // Esc 关闭设置，而不是把整个面板收起
         .onExitCommand { onClose() }
@@ -355,5 +422,32 @@ struct GlassStrengthField: View {
             }
         }
         .padding(.top, 1)
+    }
+}
+
+/// 设置页里的轻量按钮：无边框、悬停才浮现底色。
+struct QuietButton: View {
+    let title: String
+    let action: () -> Void
+    @StateObject private var hover = QuietHover()
+
+    final class QuietHover: ObservableObject {
+        @Published var on = false
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 10.5))
+                .foregroundStyle(hover.on ? Theme.ink : Theme.inkSecondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(hover.on ? Theme.surfaceHover : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { hover.on = $0 }
     }
 }
