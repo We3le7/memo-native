@@ -283,13 +283,30 @@ struct ContentView: View {
     private var composer: some View {
         VStack(spacing: 10) {
             // 输入框：本界面的视觉重心。
-            // 抬起感来自「浅色底 + 内描边 + 极淡外阴影」三层叠加，
-            // 而不是把边框画重；聚焦时描边转为强调色并加一圈柔光。
-            HStack(spacing: 9) {
-                Image(systemName: "pencil.line")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(inputFocused ? Theme.accent : Theme.inkQuaternary)
-                    .frame(width: 16)
+            //
+            // 之前的问题：
+            //   · 清空按钮和 ↵ 提示都挤在框内，和文字抢位置
+            //   · 三个元素（铅笔画、文字、两个按钮）平铺在一行，没有主次
+            //   · 聚焦时整框描边变强调色，但紫色描边 + 紫色柔光有些过重
+            //
+            // 现在：
+            //   · 左侧铅笔改为**聚焦时填充色块**——不看文字也知道焦点在哪
+            //   · 文字独占中间，两侧只放最必要的
+            //   · 回车提示改成独立胶囊，像真的键帽；只在有内容时才亮
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(inputFocused ? Theme.accent : Color.clear)
+                        .frame(width: 19, height: 19)
+
+                    Image(systemName: "pencil.line")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(inputFocused ? Color.white : Theme.inkQuaternary)
+                }
+                .frame(width: 19, height: 19)
+                // 聚焦时轻轻弹一下，给出"可以打字了"的即时反馈
+                .scaleEffect(inputFocused ? 1.0 : 0.94)
+                .animation(Theme.springBouncy, value: inputFocused)
 
                 TextField("记点什么…", text: $ui.draft)
                     .textFieldStyle(.plain)
@@ -301,44 +318,64 @@ struct ContentView: View {
                     Button {
                         withAnimation(Theme.easeFast) { ui.draft = "" }
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.inkQuaternary)
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Theme.inkTertiary)
+                            .frame(width: 17, height: 17)
+                            .background(Circle().fill(Theme.surfaceHover))
+                            .contentShape(Circle().inset(by: -2))
                     }
                     .buttonStyle(.plain)
                     .help("清空")
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
                 }
 
-                // 回车提示：给「随手记录」一个可发现的出口
+                // 回车提示：做成键帽的样子，有内容时才点亮。
+                // 它同时承担两个作用——提示"这样就能存"，
+                // 以及在视觉上把右侧封住，输入行不至于向右散掉。
                 Text("↵")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(inputFocused && !ui.draft.isEmpty ? Theme.accent : Theme.inkQuaternary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(inputFocused && !ui.draft.isEmpty ? Theme.accent.opacity(0.14) : Color.clear)
+                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(
+                        inputFocused && !ui.draft.isEmpty ? Theme.accent : Theme.inkQuaternary
                     )
-                    .scaleEffect(inputFocused && !ui.draft.isEmpty ? 1.06 : 1)
+                    .frame(width: 19, height: 19)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(inputFocused && !ui.draft.isEmpty
+                                  ? Theme.accent.opacity(0.13)
+                                  : Theme.surfaceHover)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .strokeBorder(
+                                inputFocused && !ui.draft.isEmpty
+                                    ? Theme.accent.opacity(0.30)
+                                    : Color.clear,
+                                lineWidth: 0.8
+                            )
+                    )
+                    .scaleEffect(inputFocused && !ui.draft.isEmpty ? 1.0 : 0.92)
+                    .animation(Theme.springSnappy, value: ui.draft.isEmpty)
             }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
             .background(
                 RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
                     .fill(inputFocused ? Theme.surfaceRaised : Theme.surface)
             )
             .overlay(
+                // 聚焦描边收细：紫色比蓝色更"重"，同样的 1.2pt 会显闷，
+                // 这里降到 1.0 并降低不透明度。
                 RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
                     .strokeBorder(
-                        inputFocused ? Theme.accent.opacity(0.55) : Theme.stroke,
-                        lineWidth: inputFocused ? 1.2 : Theme.hairline
+                        inputFocused ? Theme.accent.opacity(0.40) : Theme.stroke,
+                        lineWidth: inputFocused ? 1.0 : Theme.hairline
                     )
             )
             .shadow(
-                color: inputFocused ? Theme.accent.opacity(0.16) : .black.opacity(0.05),
-                radius: inputFocused ? 9 : 4,
-                y: inputFocused ? 3 : 1
+                color: inputFocused ? Theme.accent.opacity(0.10) : .black.opacity(0.05),
+                radius: inputFocused ? 8 : 4,
+                y: inputFocused ? 2 : 1
             )
             .animation(Theme.springSnappy, value: inputFocused)
             .animation(Theme.easeFast, value: ui.draft.isEmpty)
@@ -348,8 +385,18 @@ struct ContentView: View {
                 // 工期放在最左，且直接展开——不用先悬停再点。
                 // 它是这一行里最常调的东西，藏在悬停后面等于每次
                 // 都多一步；常驻反而更快，也让这一行有个自然的起点。
-                SpanPicker(span: $ui.span)
-                    .padding(.trailing, 10)
+                // 图标留在选择器左侧：一眼看出这一排调的是工期，
+                // 而不是另一个"分几档"的抽象选项。
+                HStack(spacing: 5) {
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Theme.inkTertiary)
+                        .frame(width: 16)
+                        .help("工期")
+
+                    SpanPicker(span: $ui.span)
+                }
+                .padding(.trailing, 10)
 
                 Spacer(minLength: 8)
 

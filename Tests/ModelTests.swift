@@ -30,6 +30,7 @@ testSpan()
     testPriorityDotIsCapsule()
     testNewMemoDefaultsToToday()
     testSpanPickerMatchesPriority()
+    testPaletteContrast()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -874,6 +875,57 @@ func testSpanPickerMatchesPriority() {
     // 真正要一致的是：都用 matchedGeometryEffect 滑动底块。
 }
 
+
+@MainActor
+
+
+/// 每个语义色在浅色和深色模式下都要够清楚。
+///
+/// 起因：原来用固定色值，黄 (#D9A800) 在白底上对比度只有 2.01，
+/// 橙只有 2.45——WCAG 非文本元素要求 ≥ 3.0，这两个在浅色模式下
+/// 基本看不清。深色模式下则是蓝色强调色发闷。
+///
+/// 现在每个颜色按外观分别取值。这条测试把"两边都过线"钉死，
+/// 以后改色值如果只顾了一侧，测试会直接报出来。
+func testPaletteContrast() {
+    // 与 DesignSystem.swift 里 Priority.tint 的取值保持一致
+    let palette: [(String, (Double,Double,Double), (Double,Double,Double))] = [
+        ("urgent", (0.835,0.216,0.239), (0.949,0.361,0.376)),
+        ("high",   (0.784,0.396,0.031), (0.973,0.573,0.129)),
+        ("normal", (0.639,0.478,0.000), (0.941,0.769,0.208)),
+        ("low",    (0.020,0.541,0.478), (0.157,0.741,0.671)),
+    ]
+    let accent: (Double,Double,Double) = (0.545, 0.361, 0.965)
+
+    for (name, light, dark) in palette {
+        let lc = UILogic.contrastRatio(light, UILogic.lightPanelBackground)
+        let dc = UILogic.contrastRatio(dark, UILogic.darkPanelBackground)
+        check(lc >= UILogic.minContrast,
+              "\(name) 浅色对比度 \(String(format: "%.2f", lc)) 不足 3.0")
+        check(dc >= UILogic.minContrast,
+              "\(name) 深色对比度 \(String(format: "%.2f", dc)) 不足 3.0")
+    }
+
+    // 强调色两种模式都要过线
+    let ac = UILogic.contrastRatio(accent, UILogic.lightPanelBackground)
+    let ad = UILogic.contrastRatio(accent, UILogic.darkPanelBackground)
+    check(ac >= UILogic.minContrast, "强调色浅色对比度 \(String(format: "%.2f", ac)) 不足")
+    check(ad >= UILogic.minContrast, "强调色深色对比度 \(String(format: "%.2f", ad)) 不足")
+
+    // 两侧均衡：弱的一侧不应低于强的一侧太多，
+    // 否则会出现"浅色好看、深色发闷"这种偏科
+    check(min(ac, ad) / max(ac, ad) > 0.7,
+          "强调色两侧应大致均衡，不能偏科")
+
+    // 强调色不能和任何优先级的色相相同——否则界面里
+    // "可交互"和"某档优先级"会撞色
+    for (name, light, _) in palette {
+        let dist = pow(pow(accent.0 - light.0, 2)
+                     + pow(accent.1 - light.1, 2)
+                     + pow(accent.2 - light.2, 2), 0.5)
+        check(dist > 0.5, "强调色与 \(name) 太接近（距离 \(String(format: "%.2f", dist))）")
+    }
+}
 
 @MainActor
 func testCorruptedFileProtection() {

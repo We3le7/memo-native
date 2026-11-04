@@ -367,3 +367,34 @@ extension UILogic {
         span <= 1 ? "当天" : "\(span) 天"
     }
 }
+
+// MARK: - 配色对比度
+
+extension UILogic {
+    /// WCAG 相对亮度。
+    static func relativeLuminance(r: Double, g: Double, b: Double) -> Double {
+        func lin(_ c: Double) -> Double {
+            c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+    }
+
+    /// WCAG 对比度（1...21）。
+    static func contrastRatio(
+        _ a: (Double, Double, Double),
+        _ b: (Double, Double, Double)
+    ) -> Double {
+        let la = relativeLuminance(r: a.0, g: a.1, b: a.2)
+        let lb = relativeLuminance(r: b.0, g: b.1, b: b.2)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+    }
+
+    /// 面板背景的近似色（深色 / 浅色）。
+    ///
+    /// 实际是毛玻璃，这里是取样得到的等效值——足够判断对比度。
+    static let darkPanelBackground: (Double, Double, Double) = (0.118, 0.118, 0.118)
+    static let lightPanelBackground: (Double, Double, Double) = (0.96, 0.96, 0.96)
+
+    /// 非文本元素的可读下限（WCAG 1.4.11）。
+    static let minContrast: Double = 3.0
+}
