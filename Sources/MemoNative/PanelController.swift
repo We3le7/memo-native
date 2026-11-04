@@ -333,13 +333,16 @@ final class PanelController {
         guard let screen else { panel.center(); return }
         let visible = screen.visibleFrame
 
+        // orbFrame 是窗口，比球体每边大 bleed。
+        // 要让面板离**球体**保持 gap，得把这段留白补回来。
+        let bleed = OrbMetrics.bleed
         var origin = NSPoint(
-            x: orbFrame.minX - size.width - gap,
+            x: orbFrame.minX + bleed - size.width - gap,
             y: orbFrame.midY - size.height / 2
         )
         // 左边放不下 → 放到球右边
         if origin.x < visible.minX + 8 {
-            origin.x = orbFrame.maxX + gap
+            origin.x = orbFrame.maxX - bleed + gap
         }
         // 右边也放不下 → 居中兜底
         if origin.x + size.width > visible.maxX - 8 {
