@@ -32,6 +32,7 @@ testSpan()
     testSpanPickerMatchesPriority()
     testPaletteContrast()
     testCardGrid()
+    testBulletPoints()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -1025,6 +1026,89 @@ func testCardGrid() {
     let w4 = UILogic.cardWidth(available: available, columns: 4, spacing: spacing)
     check(w2 > w4, "列数增加时单张应更窄")
     check(abs(w2 - w) < 0.01, "两列宽度应与实际取用的一致")
+}
+
+
+
+/// 子要点的解析、清洗与增删改。
+///
+/// 要点存在被闲置的 note 字段里（换行分隔的纯文本）。
+/// 这样老数据天然兼容：note 是空串时拆出来就是空数组。
+@MainActor
+func testBulletPoints() {
+    // ── 解析 ──
+    var memo = Memo.make(title: "测试", priority: .normal, dueDate: DateKey.today)
+    check(memo.bulletPoints.isEmpty, "空 note 应解析出空数组")
+    check(!memo.hasPoints, "空 note 不应有要点")
+
+    memo.note = "买牛奶\n交房租\n  打电话  \n\n"
+    check(memo.bulletPoints == ["买牛奶", "交房租", "打电话"],
+          "应去掉空行和首尾空白，实测 \(memo.bulletPoints)")
+    check(memo.hasPoints, "有内容时 hasPoints 应为真")
+
+    // ── 序列化 ──
+    check(Memo.noteText(from: ["a", "b"]) == "a\nb", "应换行连接")
+    check(Memo.noteText(from: ["  a  ", "", "b"]) == "a\nb", "应先清洗再连接")
+    check(Memo.noteText(from: []) == "", "空数组应得到空串")
+
+    // 往返一致
+    let round = ["甲", "乙", "丙"]
+    check(Memo.noteText(from: round).components(separatedBy: "\n").filter { !$0.isEmpty } == round,
+          "序列化再解析应还原")
+
+    // ── 清洗 ──
+    check(UILogic.normalizeBullet("  ") == nil, "全空白应丢弃")
+    check(UILogic.normalizeBullet("  有效  ") == "有效", "应去首尾空白")
+    let long = String(repeating: "字", count: 300)
+    let cut = UILogic.normalizeBullet(long)
+    check(cut?.count == UILogic.maxBulletLength, "超长应截断到上限")
+
+    // ── 追加 ──
+    check(UILogic.appendingBullet([], "第一条") == ["第一条"], "空列表应能追加")
+    check(UILogic.appendingBullet(["a"], "  ") == ["a"], "空白不应追加")
+    check(UILogic.appendingBullet(["a"], "b") == ["a", "b"], "应按顺序追加")
+
+    // 上限
+    var full: [String] = []
+    for i in 0..<UILogic.maxBulletPoints {
+        full = UILogic.appendingBullet(full, "第\(i)条")
+    }
+    check(full.count == UILogic.maxBulletPoints, "应能加满")
+    check(!UILogic.canAddBullet(full), "满后不能再加")
+    check(UILogic.appendingBullet(full, "溢出") == full, "满后追加应无效")
+
+    // ── 删除 ──
+    check(UILogic.removingBullet(["a","b","c"], at: 1) == ["a","c"], "应删中间项")
+    check(UILogic.removingBullet(["a"], at: 0) == [], "应能删到空")
+    check(UILogic.removingBullet(["a"], at: 5) == ["a"], "越界应原样返回")
+    check(UILogic.removingBullet(["a"], at: -1) == ["a"], "负索引应原样返回")
+
+    // ── 改写 ──
+    check(UILogic.replacingBullet(["a","b"], at: 0, with: "x") == ["x","b"], "应能改写")
+    check(UILogic.replacingBullet(["a","b"], at: 0, with: "  ") == ["b"],
+          "改成空白应等于删除（不留空条目）")
+    check(UILogic.replacingBullet(["a"], at: 3, with: "x") == ["a"], "越界改写应原样返回")
+
+    // ── 计数文案 ──
+    check(UILogic.bulletSummary([]) == "", "空列表不该显示角标")
+    check(UILogic.bulletSummary(["a"]) == "1 条要点", "应给出条数")
+    check(UILogic.bulletSummary(["a","b","c"]) == "3 条要点", "应给出条数")
+
+    // ── store 层：要点能落盘 ──
+    let tmp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("points-\(UUID().uuidString).json")
+    let store = MemoStore(fileURL: tmp)
+    if let added = store.add(title: "带要点", priority: .high, dueDate: DateKey.today,
+                             span: 2, note: "甲\n乙\n\n丙") {
+        let saved = store.items.first { $0.id == added.id }
+        check(saved?.bulletPoints == ["甲","乙","丙"], "add 应保存要点，实测 \(saved?.bulletPoints ?? [])")
+        store.setNote(added.id, to: "新的一条")
+        check(store.items.first { $0.id == added.id }?.bulletPoints == ["新的一条"],
+              "setNote 应整体替换")
+    } else {
+        check(false, "add 应成功")
+    }
+    try? FileManager.default.removeItem(at: tmp)
 }
 
 @MainActor

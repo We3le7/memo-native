@@ -11,12 +11,50 @@ import Combine
 @MainActor
 final class ComposerState: ObservableObject {
     @Published var draft: String = ""
+
+    /// 正在录入的子要点（标题之下、发出去之前的暂存）
+    @Published var draftPoints: [String] = []
+    /// 要点输入行的当前文字
+    @Published var pointDraft: String = ""
+    /// 有没有展开要点输入区。
+    /// 默认收起，避免打开面板就顶着一堆空行；
+    /// 用户按 Tab 或点「+ 要点」才展开。
+    @Published var pointsExpanded: Bool = false
     @Published var priority: Priority = .normal
     /// 新事项的工期（天）
     @Published var span: Int = 1
     @Published var filter: Filter = .all
     @Published var editingID: String?
     @Published var editingText: String = ""
+    /// 正在编辑的事项的子要点（进入编辑时从 item.bulletPoints 复制）
+    @Published var editingPoints: [String] = []
+    /// 编辑要点时的当前输入
+    @Published var editingPointDraft: String = ""
+
+    /// 进入编辑：把标题和要点都复制进来
+    func beginEdit(_ item: Memo) {
+        editingID = item.id
+        editingText = item.title
+        editingPoints = item.bulletPoints
+        editingPointDraft = ""
+    }
+
+    /// 追加一条要点到正在编辑的事项
+    @discardableResult
+    func appendEditingPoint() -> Bool {
+        let before = editingPoints.count
+        editingPoints = UILogic.appendingBullet(editingPoints, editingPointDraft)
+        guard editingPoints.count > before else { return false }
+        editingPointDraft = ""
+        return true
+    }
+
+    func endEdit() {
+        editingID = nil
+        editingPoints = []
+        editingPointDraft = ""
+    }
+
     @Published var toast: String?
     @Published var now: Date = Date()
 
@@ -63,6 +101,23 @@ final class ComposerState: ObservableObject {
 
     func clearUndo() { undoBuffer = [] }
 
+    /// 追加一条草稿要点。返回是否成功（空内容或已满则失败）。
+    @discardableResult
+    func appendPoint() -> Bool {
+        let before = draftPoints.count
+        draftPoints = UILogic.appendingBullet(draftPoints, pointDraft)
+        guard draftPoints.count > before else { return false }
+        pointDraft = ""
+        return true
+    }
+
+    /// 清空要点相关的全部暂存状态
+    func resetPoints() {
+        draftPoints = []
+        pointDraft = ""
+        pointsExpanded = false
+    }
+
     func flash(_ message: String) {
         toast = message
         toastToken += 1
@@ -107,6 +162,7 @@ struct ContentView: View {
     @ObservedObject var settings: AppSettings
     @StateObject private var ui = ComposerState()
     @FocusState private var inputFocused: Bool
+    @FocusState private var pointFocused: Bool
 
     /// 展开形变状态。用 EnvironmentObject 而不是普通属性：
     /// rootView 是值类型，每次改属性都会重建 NSHostingView，
@@ -350,6 +406,39 @@ struct ContentView: View {
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
                 }
 
+                // 要点入口：常驻的小按钮。
+                // 放在回车键左边，因为它比回车更"次要"——
+                // 回车是主操作，要点是可选的分支。
+                if !ui.pointsExpanded {
+                    Button {
+                        withAnimation(Theme.springSnappy) {
+                            ui.pointsExpanded = true
+                        }
+                        // 展开后把焦点交给要点输入行，省掉一次点击
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            pointFocused = true
+                        }
+                    } label: {
+                        HStack(spacing: 2) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 8, weight: .bold))
+                            Text("要点")
+                                .font(.system(size: 9.5, weight: .medium))
+                        }
+                        .foregroundStyle(Theme.inkTertiary)
+                        .padding(.horizontal, 5)
+                        .frame(height: 19)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(Theme.surfaceHover)
+                        )
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("添加子要点")
+                    .transition(.scale(scale: 0.9).combined(with: .opacity))
+                }
+
                 // 回车提示：做成键帽的样子，有内容时才点亮。
                 // 它同时承担两个作用——提示"这样就能存"，
                 // 以及在视觉上把右侧封住，输入行不至于向右散掉。
@@ -399,6 +488,87 @@ struct ContentView: View {
             )
             .animation(Theme.springSnappy, value: inputFocused)
             .animation(Theme.easeFast, value: ui.draft.isEmpty)
+
+            // 子要点区：已加的要点 + 一条常驻输入行。
+            //
+            // 只有展开时才占高度。默认收起的原因：打开面板首先看到的
+            // 应该是一个干净的输入框，而不是一个待填的表单。
+            // 按 Tab 或点「+ 要点」展开，展开后一直留着——
+            // 连续加几条要点时不该每次都重新点开。
+            if ui.pointsExpanded {
+                VStack(alignment: .leading, spacing: 5) {
+                    // 已加的要点：每条右侧一个删除键（悬停才显形）
+                    ForEach(Array(ui.draftPoints.enumerated()), id: \.offset) { index, point in
+                        DraftPointRow(
+                            text: point,
+                            onChange: { newText in
+                                ui.draftPoints = UILogic.replacingBullet(
+                                    ui.draftPoints, at: index, with: newText
+                                )
+                            },
+                            onDelete: {
+                                withAnimation(Theme.springSnappy) {
+                                    ui.draftPoints = UILogic.removingBullet(ui.draftPoints, at: index)
+                                }
+                            }
+                        )
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity.combined(with: .move(edge: .top)),
+                                removal: .opacity.combined(with: .scale(scale: 0.94))
+                            )
+                        )
+                    }
+
+                    // 要点输入行
+                    HStack(spacing: 7) {
+                        // 圆点：和列表里要点用同一个符号，形成呼应
+                        Circle()
+                            .fill(Theme.inkQuaternary)
+                            .frame(width: 3.5, height: 3.5)
+                            .padding(.leading, 2)
+
+                        TextField(
+                            UILogic.canAddBullet(ui.draftPoints)
+                                ? "加一条要点，回车添加"
+                                : "最多 \(UILogic.maxBulletPoints) 条",
+                            text: $ui.pointDraft
+                        )
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .focused($pointFocused)
+                        .disabled(!UILogic.canAddBullet(ui.draftPoints))
+                        .onSubmit(addPoint)
+
+                        if !ui.draftPoints.isEmpty {
+                            Text(UILogic.bulletSummary(ui.draftPoints))
+                                .font(.system(size: 9.5, weight: .medium))
+                                .foregroundStyle(Theme.inkQuaternary)
+                                .monospacedDigit()
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Theme.surface)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(
+                                pointFocused ? Theme.inkQuaternary : Theme.stroke,
+                                lineWidth: pointFocused ? 1 : Theme.hairline
+                            )
+                    )
+                }
+                .padding(.horizontal, 1)
+                .transition(
+                    .asymmetric(
+                        insertion: .opacity.combined(with: .move(edge: .top)),
+                        removal: .opacity
+                    )
+                )
+            }
 
             // 一行承载：日期 + 优先级。文字优先，颜色只用于优先级圆点。
             HStack(spacing: 0) {
@@ -503,53 +673,7 @@ struct ContentView: View {
                         ForEach(store.pendingGroupSlices(visibleItems), id: \.key) { group in
                             Section {
                                 ForEach(group.items) { item in
-                                    MemoRow(
-                                        item: item,
-                                        isEditing: ui.editingID == item.id,
-                                        editingText: $ui.editingText,
-                                        onToggle: {
-                                            withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
-                                                store.toggleDone(item.id)
-                                            }
-                                        },
-                                        onDelete: {
-                                            withAnimation(.easeInOut(duration: 0.22)) {
-                                                if let removed = store.delete(item.id) {
-                                                    ui.rememberForUndo([removed])
-                                                    ui.flash("已删除")
-                                                }
-                                            }
-                                        },
-                                        onCyclePriority: { cyclePriority(item) },
-                                        onSetSpan: { days in
-                                            withAnimation(.easeOut(duration: 0.16)) {
-                                                store.setSpan(item.id, to: days)
-                                            }
-                                        },
-                                        onSetPriority: { level in
-                                            withAnimation(.easeOut(duration: 0.16)) {
-                                                store.setPriority(item.id, to: level)
-                                            }
-                                        },
-                                        onBeginEdit: {
-                                            ui.editingID = item.id
-                                            ui.editingText = item.title
-                                        },
-                                        onCommitEdit: {
-                                            store.rename(item.id, to: ui.editingText)
-                                            ui.editingID = nil
-                                        },
-                                        onCancelEdit: { ui.editingID = nil }
-                                    )
-                                    // 增删时整行淡入并轻微上移，而不是瞬间闪现
-                                    .transition(
-                                        .asymmetric(
-                                            insertion: .opacity
-                                                .combined(with: .move(edge: .top))
-                                                .combined(with: .scale(scale: 0.97, anchor: .top)),
-                                            removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .leading))
-                                        )
-                                    )
+                                    memoRow(for: item)
                                 }
                             } header: {
                                 GroupHeader(key: group.key, items: group.items)
@@ -569,20 +693,59 @@ struct ContentView: View {
         .animation(Theme.easeMedium, value: visibleItems.isEmpty)
     }
 
+    /// 单张卡片。同样为了避开类型检查超时而抽出来。
+    private func memoCard(for item: Memo, index: Int) -> some View {
+        MemoCard(
+            item: item,
+            isEditing: ui.editingID == item.id,
+            editingText: $ui.editingText,
+            editingPoints: $ui.editingPoints,
+            editingPointDraft: $ui.editingPointDraft,
+            onSubmitPoint: { ui.appendEditingPoint() },
+            onToggle: {
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
+                    store.toggleDone(item.id)
+                }
+            },
+            onDelete: {
+                withAnimation(.easeInOut(duration: 0.22)) {
+                    if let removed = store.delete(item.id) {
+                        ui.rememberForUndo([removed])
+                        ui.flash("已删除")
+                    }
+                }
+            },
+            onBeginEdit: { ui.beginEdit(item) },
+            onCommitEdit: {
+                store.rename(item.id, to: ui.editingText)
+                store.setNote(item.id, to: Memo.noteText(from: ui.editingPoints))
+                ui.endEdit()
+            },
+            onCancelEdit: { ui.endEdit() },
+            onSetPriority: { level in
+                withAnimation(.easeOut(duration: 0.16)) {
+                    store.setPriority(item.id, to: level)
+                }
+            }
+        )
+        .modifier(CardFlyIn(index: index, enabled: !reduceMotion))
+        .transition(
+            .asymmetric(
+                insertion: .opacity.combined(with: .scale(scale: 0.94)),
+                removal: .opacity.combined(with: .scale(scale: 0.94))
+            )
+        )
+    }
+
     /// 卡片网格。
     ///
-    /// 用 LazyVGrid 而不是自己算列：列宽由 GeometryReader 给死，
-    /// 保证三列且每列等宽；minWidth 只是兜底，实际不会被撑破。
-    ///
     /// 卡片视图不做日期分组——分组标题在网格里会把连续感切断，
-    /// 而卡片的意义正是"一眼看全"。日期信息降级到卡片底部的小字。
+    /// 而卡片的意义正是"一眼看全"。
     private var cardArea: some View {
         GeometryReader { geo in
             let spacing: CGFloat = 8
             let horizontalPadding: CGFloat = 8
             let usable = geo.size.width - horizontalPadding * 2
-            // 三列：面板内容宽约 584，减去边距后每张约 180pt。
-            // 这个宽度能放下 12~14 个汉字，标题两行内可读完。
             let columns = UILogic.cardColumnCount()
             let cardWidth = UILogic.cardWidth(
                 available: Double(usable),
@@ -599,47 +762,7 @@ struct ContentView: View {
                     spacing: spacing
                 ) {
                     ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
-                        MemoCard(
-                            item: item,
-                            isEditing: ui.editingID == item.id,
-                            editingText: $ui.editingText,
-                            onToggle: {
-                                withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
-                                    store.toggleDone(item.id)
-                                }
-                            },
-                            onDelete: {
-                                withAnimation(.easeInOut(duration: 0.22)) {
-                                    if let removed = store.delete(item.id) {
-                                        ui.rememberForUndo([removed])
-                                        ui.flash("已删除")
-                                    }
-                                }
-                            },
-                            onBeginEdit: {
-                                // 原地编辑：两列宽约 280pt，放得下输入框。
-                                // （三列时只有 184pt，才需要退回列表编辑。）
-                                ui.editingID = item.id
-                                ui.editingText = item.title
-                            },
-                            onCommitEdit: {
-                                store.rename(item.id, to: ui.editingText)
-                                ui.editingID = nil
-                            },
-                            onCancelEdit: { ui.editingID = nil },
-                            onSetPriority: { level in
-                                withAnimation(.easeOut(duration: 0.16)) {
-                                    store.setPriority(item.id, to: level)
-                                }
-                            }
-                        )
-                        .modifier(CardFlyIn(index: index, enabled: !reduceMotion))
-                        .transition(
-                            .asymmetric(
-                                insertion: .opacity.combined(with: .scale(scale: 0.94)),
-                                removal: .opacity.combined(with: .scale(scale: 0.94))
-                            )
-                        )
+                        memoCard(for: item, index: index)
                     }
                 }
                 .padding(.horizontal, horizontalPadding)
@@ -648,6 +771,62 @@ struct ContentView: View {
             }
             .scrollIndicators(.never)
         }
+    }
+
+    /// 单行列表项。
+    ///
+    /// 抽成方法而不是写在 ForEach 里：闭包串太长会让
+    /// Swift 的类型检查器超时（compiler unable to type-check
+    /// in reasonable time）。拆开后每个函数的表达式规模可控。
+    private func memoRow(for item: Memo) -> some View {
+        MemoRow(
+            item: item,
+            isEditing: ui.editingID == item.id,
+            editingText: $ui.editingText,
+            editingPoints: $ui.editingPoints,
+            editingPointDraft: $ui.editingPointDraft,
+            onSubmitPoint: { ui.appendEditingPoint() },
+            onToggle: {
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
+                    store.toggleDone(item.id)
+                }
+            },
+            onDelete: {
+                withAnimation(.easeInOut(duration: 0.22)) {
+                    if let removed = store.delete(item.id) {
+                        ui.rememberForUndo([removed])
+                        ui.flash("已删除")
+                    }
+                }
+            },
+            onCyclePriority: { cyclePriority(item) },
+            onSetSpan: { days in
+                withAnimation(.easeOut(duration: 0.16)) {
+                    store.setSpan(item.id, to: days)
+                }
+            },
+            onSetPriority: { level in
+                withAnimation(.easeOut(duration: 0.16)) {
+                    store.setPriority(item.id, to: level)
+                }
+            },
+            onBeginEdit: { ui.beginEdit(item) },
+            onCommitEdit: {
+                store.rename(item.id, to: ui.editingText)
+                store.setNote(item.id, to: Memo.noteText(from: ui.editingPoints))
+                ui.endEdit()
+            },
+            onCancelEdit: { ui.endEdit() }
+        )
+        // 增删时整行淡入并轻微上移，而不是瞬间闪现
+        .transition(
+            .asymmetric(
+                insertion: .opacity
+                    .combined(with: .move(edge: .top))
+                    .combined(with: .scale(scale: 0.97, anchor: .top)),
+                removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .leading))
+            )
+        )
     }
 
     private var emptyState: some View {
@@ -728,14 +907,37 @@ struct ContentView: View {
     private func commit() {
         let text = ui.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        let dueKey = ui.resolvedDueKey
-        withAnimation(.spring(response: 0.36, dampingFraction: 0.84)) {
-            _ = store.add(title: text, priority: ui.priority, dueDate: dueKey, span: ui.span)
-            ui.draft = ""
-            // 工期不重置：连续录入同类事项时，通常还是同样的工期
-            
+
+        // 要点输入行里还有没提交的文字，一并收进去——
+        // 用户写完最后一条要点直接回车，不该丢掉它。
+        if let pending = UILogic.normalizeBullet(ui.pointDraft) {
+            ui.draftPoints = UILogic.appendingBullet(ui.draftPoints, pending)
         }
-        ui.flash("已记录")
+
+        let dueKey = ui.resolvedDueKey
+        let note = Memo.noteText(from: ui.draftPoints)
+        // 先记下条数：下面 resetPoints() 会把 draftPoints 清空，
+        // 之后再读就是 0，提示语会永远显示"已记录"。
+        let pointCount = ui.draftPoints.count
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.84)) {
+            _ = store.add(
+                title: text,
+                priority: ui.priority,
+                dueDate: dueKey,
+                span: ui.span,
+                note: note
+            )
+            ui.draft = ""
+            ui.resetPoints()
+            // 工期不重置：连续录入同类事项时，通常还是同样的工期
+        }
+        ui.flash(pointCount == 0 ? "已记录" : "已记录，含 \(pointCount) 条要点")
+    }
+
+    /// 添加一条要点。空内容不做事，也不收起键盘——用户可以继续输。
+    private func addPoint() {
+        guard ui.appendPoint() else { return }
+        // 不移动焦点：连续加要点时焦点留在原处最顺手
     }
 
     private func cyclePriority(_ item: Memo) {
@@ -1009,6 +1211,165 @@ struct GroupHeader: View {
 
 // MARK: - 单行
 
+// MARK: - 要点编辑器
+
+/// 已有事项的要点编辑区：列出全部要点，可改可删，底部一行添加。
+///
+/// 列表和卡片共用同一个组件——两套实现迟早会走偏。
+struct PointsEditor: View {
+    @Binding var points: [String]
+    @Binding var draft: String
+    let onSubmit: () -> Void
+
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Theme.inkTertiary)
+                        .frame(width: 3, height: 3)
+                        .padding(.leading, 1)
+
+                    TextField(
+                        "",
+                        text: Binding(
+                            get: { point },
+                            set: { points = UILogic.replacingBullet(points, at: index, with: $0) }
+                        )
+                    )
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.inkSecondary)
+
+                    Button {
+                        withAnimation(Theme.springSnappy) {
+                            points = UILogic.removingBullet(points, at: index)
+                        }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 7.5, weight: .bold))
+                            .foregroundStyle(Theme.inkQuaternary)
+                            .frame(width: 14, height: 14)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("删除这条要点")
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: "plus")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundStyle(Theme.inkQuaternary)
+                    .padding(.leading, 1)
+
+                TextField("加一条要点，回车添加", text: $draft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11.5))
+                    .focused($focused)
+                    .disabled(!UILogic.canAddBullet(points))
+                    .onSubmit(onSubmit)
+            }
+            .padding(.vertical, 2)
+        }
+        .padding(.top, 3)
+    }
+}
+
+// MARK: - 草稿要点行
+
+/// 输入区里已添加的一条要点。
+///
+/// 双击可就地改写——加了几条之后发现打错字，
+/// 不该只能删掉重打。
+private struct DraftPointRow: View {
+    let text: String
+    let onChange: (String) -> Void
+    let onDelete: () -> Void
+
+    @StateObject private var hover = HoverFlag()
+    @StateObject private var edit = EditState()
+    @FocusState private var focused: Bool
+
+    @MainActor
+    final class EditState: ObservableObject {
+        @Published var editing = false
+        @Published var buffer = ""
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(Theme.inkTertiary)
+                .frame(width: 3.5, height: 3.5)
+                .padding(.leading, 2)
+
+            if edit.editing {
+                TextField("", text: $edit.buffer)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .focused($focused)
+                    .onSubmit(commit)
+                    .onExitCommand { edit.editing = false }
+                    .onAppear { focused = true }
+
+                Button(action: commit) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Theme.accent)
+                        .frame(width: 15, height: 15)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("保存")
+            } else {
+                Text(text)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) {
+                        edit.buffer = text
+                        edit.editing = true
+                    }
+
+                if hover.on {
+                    Button(action: onDelete) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(Theme.inkTertiary)
+                            .frame(width: 15, height: 15)
+                            .background(Circle().fill(Theme.surfaceHover))
+                            .contentShape(Circle().inset(by: -2))
+                    }
+                    .buttonStyle(.plain)
+                    .help("删除这条要点")
+                    .transition(.opacity)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(hover.on || edit.editing ? Theme.surface : Color.clear)
+        )
+        .onHover { inside in
+            withAnimation(Theme.easeFast) { hover.on = inside }
+        }
+    }
+
+    private func commit() {
+        onChange(edit.buffer)
+        edit.editing = false
+    }
+}
+
 // MARK: - 排布切换
 
 /// 列表 / 卡片切换。
@@ -1144,6 +1505,9 @@ struct MemoCard: View {
     let item: Memo
     let isEditing: Bool
     @Binding var editingText: String
+    @Binding var editingPoints: [String]
+    @Binding var editingPointDraft: String
+    let onSubmitPoint: () -> Void
     let onToggle: () -> Void
     let onDelete: () -> Void
     let onBeginEdit: () -> Void
@@ -1229,6 +1593,32 @@ struct MemoCard: View {
                 }
 
                 Spacer(minLength: 2)
+
+                // ── 子要点 ──
+                // 卡片比列表宽裕，显示全部。
+                if isEditing {
+                    PointsEditor(
+                        points: $editingPoints,
+                        draft: $editingPointDraft,
+                        onSubmit: onSubmitPoint
+                    )
+                } else if item.hasPoints {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(item.bulletPoints.enumerated()), id: \.offset) { _, point in
+                            HStack(alignment: .top, spacing: 5) {
+                                Circle()
+                                    .fill(Theme.inkQuaternary)
+                                    .frame(width: 2.5, height: 2.5)
+                                    .padding(.top, 5)
+                                Text(point)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Theme.inkTertiary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                    .padding(.top, 1)
+                }
 
                 // ── 第二行：日期 + 工期 ──
                 //
@@ -1329,6 +1719,9 @@ struct MemoRow: View {
     let item: Memo
     let isEditing: Bool
     @Binding var editingText: String
+    @Binding var editingPoints: [String]
+    @Binding var editingPointDraft: String
+    let onSubmitPoint: () -> Void
     let onToggle: () -> Void
     let onDelete: () -> Void
     let onCyclePriority: () -> Void
@@ -1407,6 +1800,40 @@ struct MemoRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .contentShape(Rectangle())
                         .onTapGesture(count: 2, perform: onBeginEdit)
+                }
+
+                // 子要点：列表里只显示前三条，超出折叠成"+N"。
+                // 行高有限，全部铺开会把列表变得很长；
+                // 想看全的切到卡片视图。
+                if isEditing {
+                    // 编辑态：要点可改可删可加
+                    PointsEditor(
+                        points: $editingPoints,
+                        draft: $editingPointDraft,
+                        onSubmit: onSubmitPoint
+                    )
+                } else if item.hasPoints {
+                    VStack(alignment: .leading, spacing: 1.5) {
+                        ForEach(Array(item.bulletPoints.prefix(3).enumerated()), id: \.offset) { _, point in
+                            HStack(alignment: .top, spacing: 5) {
+                                Circle()
+                                    .fill(Theme.inkQuaternary)
+                                    .frame(width: 2.5, height: 2.5)
+                                    .padding(.top, 5)
+                                Text(point)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Theme.inkTertiary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        if item.bulletPoints.count > 3 {
+                            Text("还有 \(item.bulletPoints.count - 3) 条")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Theme.inkQuaternary)
+                                .padding(.leading, 7.5)
+                        }
+                    }
+                    .padding(.top, 3)
                 }
 
                 metaLine

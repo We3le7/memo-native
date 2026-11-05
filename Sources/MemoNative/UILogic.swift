@@ -442,3 +442,65 @@ extension UILogic {
         return max(0, w)
     }
 }
+
+// MARK: - 子要点
+
+extension UILogic {
+    /// 子要点条数上限。
+    ///
+    /// 不是技术限制，是产品判断：超过这个数就不是"一件事的要点"，
+    /// 而是另一份清单，该单独建一条事项了。
+    static let maxBulletPoints = 12
+
+    /// 单条要点的字数上限
+    static let maxBulletLength = 120
+
+    /// 清洗一条要点：去首尾空白、截断、去空。
+    /// 返回 nil 表示这条应当丢弃。
+    static func normalizeBullet(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return String(trimmed.prefix(maxBulletLength))
+    }
+
+    /// 清洗整个要点列表：去掉空行、限制条数。
+    static func normalizeBullets(_ raw: [String]) -> [String] {
+        raw.compactMap(normalizeBullet).prefix(maxBulletPoints).map { $0 }
+    }
+
+    /// 在末尾追加一条。空内容不追加（避免用户误按回车留下空行）。
+    static func appendingBullet(_ points: [String], _ raw: String) -> [String] {
+        guard let clean = normalizeBullet(raw) else { return points }
+        guard points.count < maxBulletPoints else { return points }
+        return points + [clean]
+    }
+
+    /// 删除某一条。越界索引原样返回。
+    static func removingBullet(_ points: [String], at index: Int) -> [String] {
+        guard points.indices.contains(index) else { return points }
+        var copy = points
+        copy.remove(at: index)
+        return copy
+    }
+
+    /// 改写某一条。改成空白等于删除，避免留下空条目。
+    static func replacingBullet(_ points: [String], at index: Int, with raw: String) -> [String] {
+        guard points.indices.contains(index) else { return points }
+        guard let clean = normalizeBullet(raw) else {
+            return removingBullet(points, at: index)
+        }
+        var copy = points
+        copy[index] = clean
+        return copy
+    }
+
+    /// 是否还能继续添加
+    static func canAddBullet(_ points: [String]) -> Bool {
+        points.count < maxBulletPoints
+    }
+
+    /// 要点计数文案。空列表返回空串（UI 据此不显示角标）。
+    static func bulletSummary(_ points: [String]) -> String {
+        points.isEmpty ? "" : "\(points.count) 条要点"
+    }
+}

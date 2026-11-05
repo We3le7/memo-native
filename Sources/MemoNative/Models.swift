@@ -67,6 +67,29 @@ struct Memo: Codable, Identifiable, Equatable, Sendable {
     /// 是否跨多天（用于 UI 决定要不要显示"3 天"这类角标）
     var isMultiDay: Bool { spanDays > 1 }
 
+    /// 子要点：把 note 按行拆开，去掉空行。
+    ///
+    /// 复用一直被闲置的 note 字段而不是新增数组——
+    /// 老数据里 note 是空串，拆出来就是空数组，天然兼容。
+    /// 存成换行分隔的纯文本还有个好处：即使哪天要手工改 JSON，
+    /// 也不会因为数组语法写错而整份解析失败。
+    var bulletPoints: [String] {
+        note.split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// 有没有子要点
+    var hasPoints: Bool { !bulletPoints.isEmpty }
+
+    /// 把要点数组写回 note
+    static func noteText(from points: [String]) -> String {
+        points
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+
     static func make(title: String, priority: Priority, dueDate: String, span: Int = 1) -> Memo {
         Memo(
             id: Self.newID(),
@@ -302,18 +325,20 @@ final class MemoStore: ObservableObject {
     // MARK: 变更
 
     @discardableResult
-    func add(title: String, priority: Priority, dueDate: String, span: Int = 1) -> Memo? {
+    func add(title: String, priority: Priority, dueDate: String, span: Int = 1,
+             note: String = "") -> Memo? {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             lastError = "请输入备忘内容"
             return nil
         }
-        let item = Memo.make(
+        var item = Memo.make(
             title: String(trimmed.prefix(200)),
             priority: priority,
             dueDate: dueDate,
             span: max(1, span)
         )
+        item.note = Memo.noteText(from: note.components(separatedBy: "\n"))
         items.append(item)
         items = MemoSort.sorted(items)
         scheduleSave()
@@ -332,6 +357,12 @@ final class MemoStore: ObservableObject {
             item.done.toggle()
             item.completedAt = item.done ? ISO8601.string(from: Date()) : nil
         }
+    }
+
+    /// 整体替换子要点。
+    func setNote(_ id: String, to text: String) {
+        let cleaned = Memo.noteText(from: text.components(separatedBy: "\n"))
+        update(id) { $0.note = cleaned }
     }
 
     func rename(_ id: String, to title: String) {
