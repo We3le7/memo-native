@@ -307,7 +307,7 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .memoSetPriorityShortcut)) { note in
             if let raw = note.object as? String, let level = Priority(rawValue: raw) {
-                withAnimation(.easeOut(duration: 0.18)) { ui.priority = level }
+                withAnimation(Theme.tap) { ui.priority = level }
                 ui.flash(level.label)
             }
         }
@@ -324,7 +324,7 @@ struct ContentView: View {
                             .fill(Color.primary.opacity(0.15))
                             .frame(width: Theme.hairline, height: 11)
                         Button("撤销") {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                            withAnimation(Theme.move) {
                                 store.restore(ui.undoBuffer)
                                 ui.clearUndo()
                                 ui.toast = nil
@@ -349,7 +349,7 @@ struct ContentView: View {
                 )
             }
         }
-        .animation(Theme.springSoft, value: ui.toast)
+        .animation(Theme.move, value: ui.toast)
     }
 
     // MARK: 顶部
@@ -397,7 +397,7 @@ struct ContentView: View {
             }
 
             IconGlyph(system: "bell", help: "标记提醒已读") {
-                withAnimation(.easeOut(duration: 0.2)) { store.markRemindersRead() }
+                withAnimation(Theme.tap) { store.markRemindersRead() }
             }
             IconGlyph(system: "gearshape", help: "设置") {
                 SettingsWindowController.shared.show()
@@ -407,7 +407,7 @@ struct ContentView: View {
         .padding(.horizontal, Theme.gutter)
         .padding(.top, 16)
         .padding(.bottom, 14)
-        .animation(Theme.springSoft, value: store.unreadReminderCount)
+        .animation(Theme.move, value: store.unreadReminderCount)
     }
 
     // MARK: 输入区
@@ -434,7 +434,7 @@ struct ContentView: View {
                     .frame(width: 17, height: 19)
                     // 聚焦时轻轻弹一下，给出"可以打字了"的即时反馈
                     .scaleEffect(inputFocused ? 1.0 : 0.94)
-                    .animation(Theme.springBouncy, value: inputFocused)
+                    .animation(Theme.confirm, value: inputFocused)
 
                 TextField("记点什么…", text: $ui.draft)
                     .textFieldStyle(.plain)
@@ -444,7 +444,7 @@ struct ContentView: View {
 
                 if !ui.draft.isEmpty {
                     Button {
-                        withAnimation(Theme.easeFast) { ui.draft = "" }
+                        withAnimation(Theme.hover) { ui.draft = "" }
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 9, weight: .bold))
@@ -505,17 +505,17 @@ struct ContentView: View {
                 // 没有颜色托底，"能点"这件事只能靠明度变化表达。
                 .brightness(writeBtn.hovering && canWrite ? 0.05 : 0)
                 .onHover { inside in
-                    withAnimation(Theme.easeFast) { writeBtn.hovering = inside }
+                    withAnimation(Theme.hover) { writeBtn.hovering = inside }
                 }
                 .scaleEffect(writeBtn.pressed ? 0.95 : 1)
-                .animation(Theme.springBouncy, value: writeBtn.pressed)
+                .animation(Theme.confirm, value: writeBtn.pressed)
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { _ in
-                            if !writeBtn.pressed { withAnimation(Theme.easeFast) { writeBtn.pressed = true } }
+                            if !writeBtn.pressed { withAnimation(Theme.hover) { writeBtn.pressed = true } }
                         }
                         .onEnded { _ in
-                            withAnimation(Theme.springBouncy) { writeBtn.pressed = false }
+                            withAnimation(Theme.confirm) { writeBtn.pressed = false }
                         }
                 )
             }
@@ -539,8 +539,8 @@ struct ContentView: View {
                 radius: inputFocused ? 8 : 4,
                 y: inputFocused ? 2 : 1
             )
-            .animation(Theme.springSnappy, value: inputFocused)
-            .animation(Theme.easeFast, value: ui.draft.isEmpty)
+            .animation(Theme.tap, value: inputFocused)
+            .animation(Theme.hover, value: ui.draft.isEmpty)
 
             // 子要点区：常驻，不折叠。
             //
@@ -558,7 +558,7 @@ struct ContentView: View {
                             )
                         },
                         onDelete: {
-                            withAnimation(Theme.springSnappy) {
+                            withAnimation(Theme.tap) {
                                 ui.draftPoints = UILogic.removingBullet(ui.draftPoints, at: index)
                             }
                         }
@@ -664,7 +664,9 @@ struct ContentView: View {
                         if reduceMotion {
                             ui.filter = option
                         } else {
-                            withAnimation(Theme.springSnappy) { ui.filter = option }
+                            // 整张列表要换掉，不是一个小控件的状态变化，
+                            // 用 move（中尺度）而不是 tap（即时反馈）。
+                            withAnimation(Theme.move) { ui.filter = option }
                         }
                     }
                 }
@@ -730,13 +732,13 @@ struct ContentView: View {
                     .padding(.bottom, 8)
                     // 用 id 序列驱动动画：只有增删/换序才动，改文字不闪
                     .animation(Theme.rowInsert, value: visibleItems.map(\.id))
-                    .animation(Theme.easeMedium, value: ui.filter)
+                    .animation(Theme.move, value: ui.filter)
                 }
                 .scrollIndicators(.never)
                 .background(Color.clear)
             }
         }
-        .animation(Theme.easeMedium, value: visibleItems.isEmpty)
+        .animation(Theme.move, value: visibleItems.isEmpty)
     }
 
     /// 单张卡片。同样为了避开类型检查超时而抽出来。
@@ -749,19 +751,21 @@ struct ContentView: View {
             editingPointDraft: $ui.editingPointDraft,
             onAddPoint: { ui.appendEditingPoint() },
             onToggle: {
-                withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
+                withAnimation(Theme.confirm) {
                     store.toggleDone(item.id)
                 }
             },
             onDelete: {
-                withAnimation(.easeInOut(duration: 0.22)) {
+                withAnimation(Theme.rowRemove) {
                     if let removed = store.delete(item.id) {
                         ui.rememberForUndo([removed])
                         ui.flash("已删除")
                     }
                 }
             },
-            onBeginEdit: { ui.beginEdit(item) },
+            onBeginEdit: {
+                withAnimation(Theme.move) { ui.beginEdit(item) }
+            },
             onCommitEdit: { commitEdit(item) },
             onCancelEdit: { ui.endEdit() },
             onFocusLost: {
@@ -769,17 +773,20 @@ struct ContentView: View {
             },
             onFocusInPoints: { ui.cancelPendingFocusLost() },
             onSetPriority: { level in
-                withAnimation(.easeOut(duration: 0.16)) {
+                withAnimation(Theme.tap) {
                     store.setPriority(item.id, to: level)
                 }
             }
         )
         .editingRegion(ui.editingID == item.id)
         .modifier(CardFlyIn(index: index, enabled: !reduceMotion))
+        // 进出场不对称：进来时轻轻放大到位，离开时缩得更小、并往下沉一点。
+        // 缩得更小是为了让"消失"读起来像被抽走，而不是原地变透明——
+        // 同尺寸的淡出在密集网格里很像闪烁。
         .transition(
             .asymmetric(
-                insertion: .opacity.combined(with: .scale(scale: 0.94)),
-                removal: .opacity.combined(with: .scale(scale: 0.94))
+                insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .top)),
+                removal: .opacity.combined(with: .scale(scale: 0.86, anchor: .center))
             )
         )
     }
@@ -834,12 +841,12 @@ struct ContentView: View {
             editingPointDraft: $ui.editingPointDraft,
             onAddPoint: { ui.appendEditingPoint() },
             onToggle: {
-                withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
+                withAnimation(Theme.confirm) {
                     store.toggleDone(item.id)
                 }
             },
             onDelete: {
-                withAnimation(.easeInOut(duration: 0.22)) {
+                withAnimation(Theme.rowRemove) {
                     if let removed = store.delete(item.id) {
                         ui.rememberForUndo([removed])
                         ui.flash("已删除")
@@ -848,16 +855,18 @@ struct ContentView: View {
             },
             onCyclePriority: { cyclePriority(item) },
             onSetSpan: { days in
-                withAnimation(.easeOut(duration: 0.16)) {
+                withAnimation(Theme.tap) {
                     store.setSpan(item.id, to: days)
                 }
             },
             onSetPriority: { level in
-                withAnimation(.easeOut(duration: 0.16)) {
+                withAnimation(Theme.tap) {
                     store.setPriority(item.id, to: level)
                 }
             },
-            onBeginEdit: { ui.beginEdit(item) },
+            onBeginEdit: {
+                withAnimation(Theme.move) { ui.beginEdit(item) }
+            },
             onCommitEdit: { commitEdit(item) },
             onCancelEdit: { ui.endEdit() },
             onFocusLost: {
@@ -867,12 +876,15 @@ struct ContentView: View {
         )
         .editingRegion(ui.editingID == item.id)
         // 增删时整行淡入并轻微上移，而不是瞬间闪现
+        // 列表行更瘦，横向抽出比缩放更贴合"一条被拿掉"。
         .transition(
             .asymmetric(
                 insertion: .opacity
                     .combined(with: .move(edge: .top))
                     .combined(with: .scale(scale: 0.97, anchor: .top)),
-                removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .leading))
+                removal: .opacity
+                    .combined(with: .move(edge: .leading))
+                    .combined(with: .scale(scale: 0.94, anchor: .leading))
             )
         )
     }
@@ -967,7 +979,7 @@ struct ContentView: View {
         // 先记下条数：下面 resetPoints() 会把 draftPoints 清空，
         // 之后再读就是 0，提示语会永远显示"已记录"。
         let pointCount = ui.draftPoints.count
-        withAnimation(.spring(response: 0.36, dampingFraction: 0.84)) {
+        withAnimation(Theme.rowInsert) {
             _ = store.add(
                 title: text,
                 priority: ui.priority,
@@ -1016,16 +1028,20 @@ struct ContentView: View {
     }
 
     private func commitEdit(_ item: Memo) {
-        store.rename(item.id, to: ui.editingText)
-        store.setNote(item.id, to: Memo.noteText(from: ui.editingPoints))
-        ui.endEdit()
+        // 用动画包住：编辑态进出时，文字和输入框要交叉淡入淡出，
+        // 不然就是一帧硬切——标题"啪"地变成输入框。
+        withAnimation(Theme.move) {
+            store.rename(item.id, to: ui.editingText)
+            store.setNote(item.id, to: Memo.noteText(from: ui.editingPoints))
+            ui.endEdit()
+        }
     }
 
     private func cyclePriority(_ item: Memo) {
         let all = Priority.allCases
         guard let index = all.firstIndex(of: item.priority) else { return }
         let next = all[(index + 1) % all.count]
-        withAnimation(.easeOut(duration: 0.16)) {
+        withAnimation(Theme.tap) {
             store.setPriority(item.id, to: next)
         }
     }
@@ -1060,7 +1076,7 @@ struct IconGlyph: View {
         .buttonStyle(.plain)
         .help(help)
         .onHover { inside in
-            withAnimation(.easeOut(duration: 0.14)) { hover.hovering = inside }
+            withAnimation(Theme.hover) { hover.hovering = inside }
         }
     }
 }
@@ -1094,7 +1110,7 @@ struct PriorityPicker: View {
                     if reduceMotion {
                         selected = level
                     } else {
-                        withAnimation(Theme.springSnappy) { selected = level }
+                        withAnimation(Theme.tap) { selected = level }
                     }
                 }
             }
@@ -1158,18 +1174,18 @@ private struct PrioritySegment: View {
         .buttonStyle(.plain)
         .help("⌘\(level.rank + 1) · \(level.label)")
         .onHover { inside in
-            withAnimation(Theme.easeFast) { hover.hovering = inside }
+            withAnimation(Theme.hover) { hover.hovering = inside }
         }
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
-                    if !hover.pressed { withAnimation(Theme.easeFast) { hover.pressed = true } }
+                    if !hover.pressed { withAnimation(Theme.hover) { hover.pressed = true } }
                 }
                 .onEnded { _ in
-                    withAnimation(Theme.springSnappy) { hover.pressed = false }
+                    withAnimation(Theme.tap) { hover.pressed = false }
                 }
         )
-        .animation(reduceMotion ? nil : Theme.springSnappy, value: isSelected)
+        .animation(reduceMotion ? nil : Theme.tap, value: isSelected)
     }
 }
 
@@ -1222,9 +1238,9 @@ struct FilterSegment: View {
         }
         .buttonStyle(.plain)
         .onHover { inside in
-            withAnimation(Theme.easeFast) { hover.hovering = inside }
+            withAnimation(Theme.hover) { hover.hovering = inside }
         }
-        .animation(Theme.springSnappy, value: isSelected)
+        .animation(Theme.tap, value: isSelected)
     }
 }
 
@@ -1394,7 +1410,7 @@ struct PointsEditor: View {
                     .onTapGesture { onFocusGained() }
 
                     Button {
-                        withAnimation(Theme.springSnappy) {
+                        withAnimation(Theme.tap) {
                             points = UILogic.removingBullet(points, at: index)
                         }
                     } label: {
@@ -1470,7 +1486,7 @@ struct PointsEditor: View {
                 .buttonStyle(.plain)
                 .disabled(!canCommit)
                 .help(canAdd ? "添加这条要点" : "已达 \(UILogic.maxBulletPoints) 条上限")
-                .animation(Theme.springSnappy, value: canCommit)
+                .animation(Theme.tap, value: canCommit)
             }
             .padding(.vertical, 2)
         }
@@ -1559,7 +1575,7 @@ private struct DraftPointRow: View {
                 .fill(hover.on || edit.editing ? Theme.surface : Color.clear)
         )
         .onHover { inside in
-            withAnimation(Theme.easeFast) { hover.on = inside }
+            withAnimation(Theme.hover) { hover.on = inside }
         }
     }
 
@@ -1594,7 +1610,7 @@ struct LayoutToggle: View {
                     } else {
                         // 切换整体给一个稍长的时长：卡片要靠 onAppear
                         // 触发的飞入动画，事务太短会让它来不及起步。
-                        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                        withAnimation(Theme.move) {
                             selected = option
                         }
                     }
@@ -1622,7 +1638,7 @@ struct LayoutToggle: View {
         .padding(2)
         .background(Capsule().fill(Theme.surface))
         .overlay(Capsule().strokeBorder(Theme.stroke, lineWidth: Theme.hairline))
-        .animation(reduceMotion ? nil : Theme.springSnappy, value: selected)
+        .animation(reduceMotion ? nil : Theme.tap, value: selected)
     }
 }
 
@@ -1743,6 +1759,7 @@ struct MemoCard: View {
                         TextField("", text: $editingText)
                             .textFieldStyle(.plain)
                             .font(.system(size: 12.5, weight: .medium))
+                            .transition(.opacity)
                             .focused($editFocused)
                             .onSubmit(onCommitEdit)
                             .onExitCommand(perform: onCancelEdit)
@@ -1785,18 +1802,38 @@ struct MemoCard: View {
                                     lineWidth: 1.2
                                 )
                                 .frame(width: 13, height: 13)
-                            if item.done {
-                                Circle()
-                                    .fill(Theme.accent)
-                                    .frame(width: 13, height: 13)
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 7, weight: .bold))
-                                    .foregroundStyle(.white)
-                            }
+                            // 填充圆：用 scale 从中心长出来，而不是整块淡入。
+                            // 淡入在 13pt 的尺寸上看不出"生长"，
+                            // 缩放才读得出"这一下被填满了"。
+                            Circle()
+                                .fill(Theme.accent)
+                                .frame(width: 13, height: 13)
+                                .scaleEffect(item.done ? 1 : 0.1)
+                                .opacity(item.done ? 1 : 0)
+
+                            // 勾：比填充晚一点出现，形成"先填满、再打勾"的两拍。
+                            // 同一时刻一起出来的话，视觉上只是一团色块闪了一下，
+                            // 看不出打过勾。
+                            // 延迟只在勾选时给；取消勾选要立刻消失，
+                            // 否则会有"点掉了但还对勾着"的一瞬。
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 7, weight: .bold))
+                                .foregroundStyle(Theme.onAccent)
+                                .scaleEffect(item.done ? 1 : 0.4)
+                                .opacity(item.done ? 1 : 0)
+                                .animation(
+                                    item.done
+                                        ? Theme.confirm.delay(0.08)
+                                        : Theme.hover,
+                                    value: item.done
+                                )
                         }
                         .frame(width: 15, height: 15)
                         .contentShape(Circle().inset(by: -3))
                         .scaleEffect(hover.pressed ? 0.88 : 1)
+                        // 外层只管填充圆的那一拍。勾有自己的动画
+                        //（带延迟），挂在这里会被覆盖掉。
+                        .animation(Theme.confirm, value: item.done)
                     }
                     .buttonStyle(.plain)
                     .help(item.done ? "标记为未完成" : "标记为已完成")
@@ -1889,7 +1926,7 @@ struct MemoCard: View {
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(hover.hovering ? Theme.surfaceRaised : Theme.surface)
-                .animation(Theme.easeFast, value: hover.hovering)
+                .animation(Theme.hover, value: hover.hovering)
         )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
@@ -1902,9 +1939,9 @@ struct MemoCard: View {
         )
         .opacity(item.done ? 0.62 : 1)
         .scaleEffect(hover.pressed ? 0.975 : 1)
-        .animation(Theme.springBouncy, value: hover.pressed)
+        .animation(Theme.confirm, value: hover.pressed)
         .onHover { inside in
-            withAnimation(Theme.easeFast) { hover.hovering = inside }
+            withAnimation(Theme.hover) { hover.hovering = inside }
         }
         .contextMenu {
             Button(item.done ? "标记为未完成" : "标记为已完成", action: onToggle)
@@ -1982,17 +2019,17 @@ struct MemoRow: View {
                 // 命中区放大：17pt 的圆圈实际可点范围更大，不必精确瞄准
                 .contentShape(Circle().inset(by: -4))
                 .scaleEffect(hover.pressed ? 0.88 : 1)
-                .animation(Theme.springBouncy, value: item.done)
+                .animation(Theme.confirm, value: item.done)
             }
             .buttonStyle(.plain)
             .help(item.done ? "标记为未完成" : "标记为已完成")
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
-                        if !hover.pressed { withAnimation(Theme.easeFast) { hover.pressed = true } }
+                        if !hover.pressed { withAnimation(Theme.hover) { hover.pressed = true } }
                     }
                     .onEnded { _ in
-                        withAnimation(Theme.springBouncy) { hover.pressed = false }
+                        withAnimation(Theme.confirm) { hover.pressed = false }
                     }
             )
             .padding(.top, 0.5)
@@ -2090,7 +2127,7 @@ struct MemoRow: View {
         .padding(.horizontal, 2)
         .opacity(item.done ? 0.62 : 1)
         .onHover { inside in
-            withAnimation(Theme.easeFast) { hover.hovering = inside }
+            withAnimation(Theme.hover) { hover.hovering = inside }
         }
         .contextMenu {
             Button(item.done ? "标记为未完成" : "标记为已完成", action: onToggle)
@@ -2295,7 +2332,7 @@ struct QuietAction: View {
         }
         .buttonStyle(.plain)
         .onHover { inside in
-            withAnimation(.easeOut(duration: 0.13)) { hover.hovering = inside }
+            withAnimation(Theme.hover) { hover.hovering = inside }
         }
     }
 }
@@ -2404,7 +2441,7 @@ struct SpanPicker: View {
                     if reduceMotion {
                         span = d
                     } else {
-                        withAnimation(Theme.springSnappy) { span = d }
+                        withAnimation(Theme.tap) { span = d }
                     }
                 }
             }
@@ -2474,18 +2511,18 @@ private struct SpanSegment: View {
         .buttonStyle(.plain)
         .help(days <= 1 ? "当天完成" : "\(days) 天")
         .onHover { inside in
-            withAnimation(Theme.easeFast) { hover.hovering = inside }
+            withAnimation(Theme.hover) { hover.hovering = inside }
         }
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
-                    if !hover.pressed { withAnimation(Theme.easeFast) { hover.pressed = true } }
+                    if !hover.pressed { withAnimation(Theme.hover) { hover.pressed = true } }
                 }
                 .onEnded { _ in
-                    withAnimation(Theme.springSnappy) { hover.pressed = false }
+                    withAnimation(Theme.tap) { hover.pressed = false }
                 }
         )
-        .animation(reduceMotion ? nil : Theme.springSnappy, value: isSelected)
+        .animation(reduceMotion ? nil : Theme.tap, value: isSelected)
     }
 }
 

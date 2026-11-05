@@ -39,6 +39,7 @@ testSpan()
     testAddButtonGating()
     testFocusLostCommitRules()
     testClickRegionHitTest()
+    testAnimationTiers()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -1456,6 +1457,58 @@ func testClickRegionHitTest() {
     check(UILogic.hitTest(point: (x: -10, y: 0), regions: [neg]), "负坐标区域应能命中")
     check(UILogic.hitTest(point: (x: -50, y: -20), regions: [neg]), "负坐标边界应命中")
     check(!UILogic.hitTest(point: (x: -100, y: 0), regions: [neg]), "负坐标区域外应不命中")
+}
+
+@MainActor
+
+
+/// 动效分档：每档要有明确的时间尺度，且不能互相挤压。
+///
+/// 这些数字不是随手取的，它们决定了整个界面的节奏感：
+///   · 悬停必须快到几乎无感，慢了就像界面在拖手
+///   · 确认要带一点过冲，能"弹一下"
+///   · 退场比入场快——东西消失不该让人等
+func testAnimationTiers() {
+    // UILogic 里放的是一份与 DesignSystem 同步的时长表，
+    // 让动画节奏成为可测的事实，而不是散落在视图里的字面量。
+    let tiers = UILogic.animationTiers
+
+    // 五档齐全
+    check(tiers.count == 5, "应有 5 档动效（实际 \(tiers.count)）")
+
+    let hover = tiers["hover"]!
+    let tap = tiers["tap"]!
+    let confirm = tiers["confirm"]!
+    let move = tiers["move"]!
+    let remove = tiers["remove"]!
+
+    // 悬停最快
+    check(hover < tap, "悬停应快于点击反馈（\(hover) vs \(tap)）")
+    check(hover <= 0.15, "悬停应 ≤0.15s，否则会显得拖手（实测 \(hover)）")
+
+    // 确认感最长（回弹需要时间走完）
+    check(confirm > move, "确认应长于中尺度移动（\(confirm) vs \(move)）")
+
+    // 中尺度用于整块内容切换，必须比即时反馈慢
+    check(move > tap, "中尺度应慢于即时反馈（\(move) vs \(tap)）")
+
+    // 退场比入场快
+    check(remove < move, "退场应快于入场（\(remove) vs \(move)）")
+    check(remove <= 0.2, "退场应 ≤0.2s，不能让人等（实测 \(remove)）")
+
+    // 全部落在合理区间：太快看不见，太慢显得卡
+    for (name, seconds) in tiers {
+        check(seconds > 0.05, "\(name) 不应短于 0.05s（看不出动）")
+        check(seconds < 0.6, "\(name) 不应长于 0.6s（显得卡顿）")
+    }
+
+    // 相邻档位要能区分：差太小就等于没有分档
+    let sorted = tiers.values.sorted()
+    for i in 1..<sorted.count {
+        let gap = sorted[i] - sorted[i-1]
+        check(gap >= 0.03,
+              "相邻档位至少差 0.03s，否则区分不出来（实测 \(String(format: "%.3f", gap))）")
+    }
 }
 
 @MainActor

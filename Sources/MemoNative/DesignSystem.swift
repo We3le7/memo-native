@@ -71,6 +71,23 @@ enum Theme {
     static let stroke = Color.primary.opacity(0.075)
     static let strokeStrong = Color.primary.opacity(0.12)
 
+    /// 强调色实心块上的文字/图标色。
+    ///
+    /// 浅色模式的强调是深绿（#096C4A），上面要放白字；
+    /// 深色模式的强调是亮绿（#34D399），上面放白字只有 1.9:1，
+    /// 几乎看不见——得放深色字。
+    /// 所以不能简单地写 .white。
+    static var onAccent: Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            // 深色模式：强调色很亮 → 用深字
+            // 浅色模式：强调色很深 → 用白字
+            return isDark
+                ? NSColor(srgbRed: 0.055, green: 0.11, blue: 0.09, alpha: 1)
+                : NSColor.white
+        })
+    }
+
     /// 实心按钮上的文字色：面板背景本身。
     ///
     /// 按钮是"墨色实心 + 反色文字"，那反色就该是面板底色——
@@ -87,19 +104,35 @@ enum Theme {
 
     // 动效
     //
-    // 三档曲线，用途分明：
-    //   snappy —— 点击、切换等「即时反馈」，要快
-    //   soft   —— 大块内容的进出场，要稳
-    //   easeFast —— 悬停这类高频、低幅的变化，快到几乎无感
-    static let springSnappy = Animation.spring(response: 0.26, dampingFraction: 0.80)
-    static let springSoft = Animation.spring(response: 0.36, dampingFraction: 0.86)
-    static let springBouncy = Animation.spring(response: 0.34, dampingFraction: 0.70)
-    static let easeFast = Animation.easeOut(duration: 0.14)
-    static let easeMedium = Animation.easeInOut(duration: 0.22)
+    // 按**用途**分档，不按形状（spring/ease）分。
+    // 早先各处直接写 .easeOut(duration: 0.16) 这类内联值，
+    // 散出五种不同的时长、四套不同的弹簧参数——
+    // 单看每一处都合理，放在一起就显得各走各的，
+    // 界面一动起来就露馅。
+    //
+    // 现在收敛成五档。同一类交互用同一档，
+    // 节奏感来自"一致"，不来自"每处都调过"。
 
-    /// 列表增删的动效：入场略带弹跳，退场干脆
+    /// 悬停、按下这类高频低幅的变化。快到几乎无感，
+    /// 慢一点就会觉得界面在拖手。
+    static let hover = Animation.easeOut(duration: UILogic.tier("hover"))
+
+    /// 即时反馈：点一下，东西就该动。
+    /// 用于选中态、勾选、小范围的形态变化。
+    static let tap = Animation.spring(response: UILogic.tier("tap"), dampingFraction: 0.80)
+
+    /// 带一点回弹的确认感。用于"完成了某件事"这类
+    /// 值得被看见的动作，弹一下比滑一下更有回应。
+    static let confirm = Animation.spring(response: UILogic.tier("confirm"), dampingFraction: 0.70)
+
+    /// 中等尺度：内容块的展开、收起、切换。
+    static let move = Animation.spring(response: UILogic.tier("move"), dampingFraction: 0.86)
+
+    /// 整行的进出场。入场略慢、带一点过冲，退场更快更干脆——
+    /// 东西消失不该让人等。
     static let rowInsert = Animation.spring(response: 0.38, dampingFraction: 0.76)
-    static let rowRemove = Animation.easeIn(duration: 0.16)
+    static let rowRemove = Animation.easeIn(duration: UILogic.tier("remove"))
+
 }
 
 // 优先级配色，与 App 图标里的四个点一致。

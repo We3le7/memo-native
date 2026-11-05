@@ -543,3 +543,34 @@ extension UILogic {
         }
     }
 }
+
+// MARK: - 动效时长
+
+extension UILogic {
+    /// 五档动效的"标称时长"（秒）。
+    ///
+    /// 这是 DesignSystem 里那几个 Animation 的唯一数据源：
+    /// Animation 由这些数字构造，测试也断言这些数字。
+    /// 如果两边各写一份，测试就会变成对着复印件验原件——
+    /// 永远通过，永远没用。
+    static let animationTiers: [String: Double] = [
+        // 悬停、按下这类高频低幅的变化。快到几乎无感。
+        "hover": 0.13,
+        // 即时反馈：点一下，东西就该动。
+        "tap": 0.26,
+        // 中尺度：内容块的展开、收起、切换。
+        // 比 tap 慢一档，让"整块内容变了"和"某个开关变了"
+        // 在节奏上能区分开。
+        "move": 0.36,
+        // 带过冲的确认感。要最长：弹簧的过冲需要时间走完，
+        // 提前收尾会让回弹看起来被截断。
+        "confirm": 0.42,
+        // 退场：比入场快，东西消失不该让人等。
+        "remove": 0.16,
+    ]
+
+    /// 按档位取时长，缺档时给一个安全值而不是崩
+    static func tier(_ name: String) -> Double {
+        animationTiers[name] ?? 0.2
+    }
+}
