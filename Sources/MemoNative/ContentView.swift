@@ -50,6 +50,40 @@ final class ComposerState: ObservableObject {
         editingPointDraft = ""
     }
 
+    /// 失焦保存的守卫：避免 commit/cancel 之后又被延迟回调重复执行。
+    private var focusLostToken = 0
+
+    /// 编辑框失焦时该怎么办。
+    ///
+    /// 不能立刻保存。焦点在同一个编辑区里挪动（标题 → 要点输入框）
+    /// 也会触发一次"失焦"，立刻保存会把还没写完的要点截断，
+    /// 而且会让界面在两次点击之间闪一下。
+    ///
+    /// 所以延迟一小会儿再判断：如果那时焦点仍没回到这条事项的
+    /// 编辑控件上，才算真的离开了。
+    ///
+    /// token 里带上事项 id。这是必须的——
+    /// editingText 是全局共享的，用户完全可能在这 120ms 内
+    /// 已经点到另一条事项并开始编辑。那时的 editingText 是新事项的
+    /// 内容，拿它去保存旧事项，会把旧事项改成别人家的标题。
+    func scheduleFocusLostCheck(for id: String, commit: @escaping () -> Void) {
+        focusLostToken += 1
+        let token = focusLostToken
+        Task { @MainActor in
+            // 让出当前 runloop，等焦点真正落定
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard token == self.focusLostToken else { return }
+            // 这期间换过对象或已退出编辑，就作废
+            guard self.editingID == id else { return }
+            commit()
+        }
+    }
+
+    /// 焦点回到编辑区时取消待执行的保存
+    func cancelPendingFocusLost() {
+        focusLostToken += 1
+    }
+
     @Published var toast: String?
     @Published var now: Date = Date()
 
@@ -203,6 +237,12 @@ struct ContentView: View {
             footer
         }
         .frame(minWidth: 520, idealWidth: 600, minHeight: 460, idealHeight: 660)
+        // 挂在根视图上而不是列表上：面板收起时列表未必还活着
+        //（空状态时 listArea 走的是 emptyState 分支），
+        // 挂在子树里会有收不到通知的情况。
+        .onReceive(NotificationCenter.default.publisher(for: .memoPanelWillFold)) { _ in
+            commitEditingIfNeeded()
+        }
         // 展开形变交给 Core Animation（见 PanelController.playUnfold/playFold）。
         //
         // 原来这里是 .scaleEffect(...) + .opacity(...)，由 @Published 逐帧驱动：
@@ -717,12 +757,12 @@ struct ContentView: View {
                 }
             },
             onBeginEdit: { ui.beginEdit(item) },
-            onCommitEdit: {
-                store.rename(item.id, to: ui.editingText)
-                store.setNote(item.id, to: Memo.noteText(from: ui.editingPoints))
-                ui.endEdit()
-            },
+            onCommitEdit: { commitEdit(item) },
             onCancelEdit: { ui.endEdit() },
+            onFocusLost: {
+                ui.scheduleFocusLostCheck(for: item.id) { commitEdit(item) }
+            },
+            onFocusInPoints: { ui.cancelPendingFocusLost() },
             onSetPriority: { level in
                 withAnimation(.easeOut(duration: 0.16)) {
                     store.setPriority(item.id, to: level)
@@ -812,12 +852,12 @@ struct ContentView: View {
                 }
             },
             onBeginEdit: { ui.beginEdit(item) },
-            onCommitEdit: {
-                store.rename(item.id, to: ui.editingText)
-                store.setNote(item.id, to: Memo.noteText(from: ui.editingPoints))
-                ui.endEdit()
+            onCommitEdit: { commitEdit(item) },
+            onCancelEdit: { ui.endEdit() },
+            onFocusLost: {
+                ui.scheduleFocusLostCheck(for: item.id) { commitEdit(item) }
             },
-            onCancelEdit: { ui.endEdit() }
+            onFocusInPoints: { ui.cancelPendingFocusLost() }
         )
         // 增删时整行淡入并轻微上移，而不是瞬间闪现
         .transition(
@@ -939,6 +979,27 @@ struct ContentView: View {
     private func addPoint() {
         guard ui.appendPoint() else { return }
         // 不移动焦点：连续加要点时焦点留在原处最顺手
+    }
+
+    /// 保存正在编辑的标题与要点，并退出编辑态。
+    ///
+    /// 抽成方法是因为回车提交、失焦提交、点完成按钮三条路
+    /// 都要做同样的事——两份实现迟早会有一处漏掉要点。
+    /// 面板即将收起时，把正在编辑的内容存下来。
+    ///
+    /// 面板一收，窗口失去 key，SwiftUI 的 @FocusState 未必会
+    /// 走 onChange（窗口级失焦和控件级失焦不是一回事）。
+    /// 用户改了一半标题、点别处让面板收起——不存就等于白改。
+    private func commitEditingIfNeeded() {
+        guard let id = ui.editingID,
+              let item = store.items.first(where: { $0.id == id }) else { return }
+        commitEdit(item)
+    }
+
+    private func commitEdit(_ item: Memo) {
+        store.rename(item.id, to: ui.editingText)
+        store.setNote(item.id, to: Memo.noteText(from: ui.editingPoints))
+        ui.endEdit()
     }
 
     private func cyclePriority(_ item: Memo) {
@@ -1161,6 +1222,10 @@ struct PointsEditor: View {
     /// 点加号时添加一条。不叫 onSubmit：它现在已经不是
     /// 回车触发的了，名字得跟着行为走。
     let onAdd: () -> Void
+    /// 焦点进入要点区时调用。
+    /// 用来取消"标题失焦即保存"的待执行动作——
+    /// 从标题点进要点输入框，不该被当成离开了编辑。
+    var onFocusGained: () -> Void = {}
 
     @FocusState private var focused: Bool
 
@@ -1191,6 +1256,7 @@ struct PointsEditor: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.inkSecondary)
+                    .onTapGesture { onFocusGained() }
 
                     Button {
                         withAnimation(Theme.springSnappy) {
@@ -1232,6 +1298,9 @@ struct PointsEditor: View {
                 .font(.system(size: 11.5))
                 .focused($focused)
                 .disabled(!canAdd)
+                .onChange(of: focused) { isFocused in
+                    if isFocused { onFocusGained() }
+                }
 
                 // 加号按钮：只在输入框有内容时才亮起来。
                 // 空输入时保持暗淡但依然占位，避免输入框宽度跳动。
@@ -1508,6 +1577,10 @@ struct MemoCard: View {
     let onBeginEdit: () -> Void
     let onCommitEdit: () -> Void
     let onCancelEdit: () -> Void
+    /// 编辑框失去焦点时调用（用于"点别处即保存"）
+    let onFocusLost: () -> Void
+    /// 焦点进入要点区时调用（取消待执行的失焦保存）
+    let onFocusInPoints: () -> Void
     let onSetPriority: (Priority) -> Void
 
     @StateObject private var hover = Hover()
@@ -1539,6 +1612,13 @@ struct MemoCard: View {
                             .onSubmit(onCommitEdit)
                             .onExitCommand(perform: onCancelEdit)
                             .onAppear { editFocused = true }
+                            // 失焦即保存：点别处就当确认修改。
+                            // 备忘录是轻量的，让"点一下别处"顺手存下改动，
+                            // 比要求用户必须按回车更符合随手记的直觉。
+                            .onChange(of: editFocused) { focused in
+                                guard !focused else { return }
+                                onFocusLost()
+                            }
                             .padding(.horizontal, 4)
                             .padding(.vertical, 2)
                             .background(
@@ -1595,7 +1675,8 @@ struct MemoCard: View {
                     PointsEditor(
                         points: $editingPoints,
                         draft: $editingPointDraft,
-                        onAdd: onAddPoint
+                        onAdd: onAddPoint,
+                        onFocusGained: onFocusInPoints
                     )
                 } else if item.hasPoints {
                     VStack(alignment: .leading, spacing: 2) {
@@ -1725,6 +1806,10 @@ struct MemoRow: View {
     let onBeginEdit: () -> Void
     let onCommitEdit: () -> Void
     let onCancelEdit: () -> Void
+    /// 编辑框失去焦点时调用（用于"点别处即保存"）
+    let onFocusLost: () -> Void
+    /// 焦点进入要点区时调用（取消待执行的失焦保存）
+    let onFocusInPoints: () -> Void
 
     @StateObject private var hover = HoverState()
     @FocusState private var editFocused: Bool
@@ -1786,6 +1871,11 @@ struct MemoRow: View {
                         .onSubmit(onCommitEdit)
                         .onExitCommand(perform: onCancelEdit)
                         .onAppear { editFocused = true }
+                        // 失焦即保存，理由同列表行
+                        .onChange(of: editFocused) { focused in
+                            guard !focused else { return }
+                            onFocusLost()
+                        }
                 } else {
                     Text(item.title)
                         .font(.system(size: 13, weight: .regular))
@@ -1805,7 +1895,8 @@ struct MemoRow: View {
                     PointsEditor(
                         points: $editingPoints,
                         draft: $editingPointDraft,
-                        onAdd: onAddPoint
+                        onAdd: onAddPoint,
+                        onFocusGained: onFocusInPoints
                     )
                 } else if item.hasPoints {
                     VStack(alignment: .leading, spacing: 1.5) {
@@ -2141,6 +2232,8 @@ extension Notification.Name {
     static let memoMenuBarVisibilityChanged = Notification.Name("memo.menuBarVisibility")
     static let memoGlassStrengthChanged = Notification.Name("memo.glassStrengthChanged")
     static let memoOpenSettings = Notification.Name("memo.openSettings")
+    /// 面板即将折叠：给正在编辑的控件一个保存的机会
+    static let memoPanelWillFold = Notification.Name("memo.panelWillFold")
 }
 
 // MARK: - 工期选择（与优先级同构）

@@ -351,6 +351,11 @@ final class PanelController {
         isRevealing = false
         foldGeneration &+= 1
 
+        // 先让界面把正在编辑的内容存下来，再开始收。
+        // 同步发出（而不是 asyncAfter）：编辑态需要在动画期间
+        // 就已经提交完毕，否则用户会在收起过程中看到文字回退。
+        NotificationCenter.default.post(name: .memoPanelWillFold, object: nil)
+
         // 收回动效：内容缩回球的方向，同时淡出，播完再真正隐藏窗口。
         // 顺序很重要——先 orderOut 就看不到动画了；
         // 但也不能无限等，用固定时长兜底，避免动画被系统打断后窗口卡在屏幕上。

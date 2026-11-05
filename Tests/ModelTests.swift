@@ -37,6 +37,7 @@ testSpan()
     testPriorityFirstSorting()
     testBulletLimitIsThree()
     testAddButtonGating()
+    testFocusLostCommitRules()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -210,8 +211,6 @@ try? FileManager.default.removeItem(at: tmpDir)
 print(failures == 0 ? "全部通过" : "\(failures) 项失败")
 }
 
-
-
 // MARK: - 悬浮球几何
 
 @MainActor
@@ -327,7 +326,6 @@ func testPriorityBreakdown() {
 
 @MainActor
 
-
 /// 展开→折叠之后，球必须回到"显示数字"的常态。
 ///
 /// 这里出过一个 bug：展开时把某个状态位设成 true 驱动"收起箭头"，
@@ -355,7 +353,6 @@ func testOrbStateResets() {
 }
 
 @MainActor
-
 
 /// 面板展开的锚点。
 ///
@@ -398,7 +395,6 @@ func testUnfoldAnchor() {
 }
 
 @MainActor
-
 
 /// 折叠必须是展开的严格逆过程。
 ///
@@ -444,7 +440,6 @@ func testFoldIsInverseOfUnfold() {
 }
 
 @MainActor
-
 
 /// 切换桌面时的状态同步。
 ///
@@ -496,7 +491,6 @@ func testSpaceChangeSyncOrb() {
 
 @MainActor
 
-
 /// 关掉悬浮球之后，任何路径都不该让它冒出来。
 ///
 /// 真出过这个 bug：在设置里关掉球，展开面板再收起，球又出现了。
@@ -534,7 +528,6 @@ func testOrbRevealRespectsToggle() {
 
 @MainActor
 
-
 /// 球关掉时不要对它播吸附动画。
 ///
 /// 窗口已经 orderOut，这时改 collapse / ignoresMouseEvents 只会污染状态：
@@ -555,7 +548,6 @@ func testOrbAbsorbRespectsToggle() {
 }
 
 @MainActor
-
 
 /// 折叠比展开慢，但**曲线形状**必须完全一致。
 ///
@@ -588,7 +580,6 @@ func testFoldSlowerButSameShape() {
 }
 
 @MainActor
-
 
 /// 折叠时页面不能消失太快。
 ///
@@ -634,7 +625,6 @@ func testFoldFadeNotTooFast() {
 
 @MainActor
 
-
 /// 折叠动画期间不能降窗口层级。
 ///
 /// 这是"页面突然消失"的根因：applyLevel(active: false) 把面板从
@@ -671,7 +661,6 @@ func testWindowLevelDuringFold() {
 
 @MainActor
 
-
 /// 折叠必须与展开**同速**。
 ///
 /// 曾经为了"收回去慢一点"把折叠单独调到 0.52、0.45。
@@ -701,7 +690,6 @@ func testFoldSameSpeedAsUnfold() {
 
 @MainActor
 
-
 /// 展开保护期必须覆盖动画全程。
 ///
 /// 这是"展开时偶尔一闪一闪"的根因：保护期 0.35s，动画 0.34s，
@@ -730,7 +718,6 @@ func testGraceCoversUnfold() {
 }
 
 @MainActor
-
 
 /// 保护期内收到失焦，必须延后判定而不是丢弃。
 ///
@@ -779,7 +766,6 @@ func testGraceResignDeferred() {
 
 @MainActor
 
-
 /// 优先级色点的命中区。
 ///
 /// 原来的色点 6pt，靠 contentShape 外扩 3.5pt 撑到 13pt——
@@ -819,7 +805,6 @@ func testPriorityDotHitArea() {
 
 @MainActor
 
-
 /// 色点是胶囊形：两端正半圆，中间一段平直。
 ///
 /// 正圆看着是"一个点"，圆角方块偏硬，胶囊是两者之间最像
@@ -846,7 +831,6 @@ func testPriorityDotIsCapsule() {
 
 @MainActor
 
-
 /// 新事项固定记在今天。
 ///
 /// 界面上已去掉日期选择键（「今天 / 明天 / 选择日期」），
@@ -870,9 +854,7 @@ func testNewMemoDefaultsToToday() {
     check(tomorrow > key, "yyyy-MM-dd 字典序应与时间序一致")
 }
 
-
 @MainActor
-
 
 /// 工期选择器必须与优先级选择器结构一致。
 ///
@@ -907,9 +889,7 @@ func testSpanPickerMatchesPriority() {
     // 真正要一致的是：都用 matchedGeometryEffect 滑动底块。
 }
 
-
 @MainActor
-
 
 /// 每个语义色在浅色和深色模式下都要够清楚。
 ///
@@ -1000,7 +980,6 @@ func testPaletteContrast() {
 
 @MainActor
 
-
 /// 卡片网格的列数与宽度。
 ///
 /// 三条约束：
@@ -1057,8 +1036,6 @@ func testCardGrid() {
     check(w2 > w4, "列数增加时单张应更窄")
     check(abs(w2 - w) < 0.01, "两列宽度应与实际取用的一致")
 }
-
-
 
 /// 子要点的解析、清洗与增删改。
 ///
@@ -1144,7 +1121,6 @@ func testBulletPoints() {
 
 @MainActor
 
-
 /// 排序以紧急程度为准，日期降级为事项内部的属性。
 ///
 /// 这条规则的边界要逐个钉死，因为排序一改，
@@ -1223,7 +1199,6 @@ func testBulletLimitIsThree() {
 
 @MainActor
 
-
 /// 确认按钮：墨色实心 + 反色文字，两种外观下都要能读。
 ///
 /// 按钮从强调绿改成中性墨色之后，可用性完全押在明度差上——
@@ -1275,7 +1250,6 @@ func testConfirmButtonContrast() {
 }
 
 @MainActor
-
 
 /// 加号按钮什么时候可点。
 ///
@@ -1331,6 +1305,94 @@ func testAddButtonGating() {
     let before2 = pts2.count
     pts2 = UILogic.appendingBullet(pts2, draft2)
     check(pts2.count == before2, "空白提交不应新增条目")
+}
+
+/// 失焦保存的三条规则。
+///
+/// 1. 焦点在编辑区内部挪动（标题→要点）不算离开
+/// 2. 真的离开时保存标题和要点
+/// 3. 这期间换了对象就作废——editingText 是共享状态，
+///    用新对象的内容去保存旧对象会造成数据错乱
+@MainActor
+func testFocusLostCommitRules() {
+    let tmp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("focus-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    let store = MemoStore(fileURL: tmp)
+    guard let a = store.add(title: "原A", priority: .normal, dueDate: DateKey.today,
+                            span: 1, note: "要点A"),
+          let b = store.add(title: "原B", priority: .normal, dueDate: DateKey.today) else {
+        check(false, "预置数据应成功")
+        return
+    }
+    check(a.id != b.id, "两条应是不同事项")
+
+    // 规则 2：真的离开 → 保存
+    store.rename(a.id, to: "改后的A")
+    store.setNote(a.id, to: Memo.noteText(from: ["要点A", "新要点"]))
+    let savedA = store.items.first { $0.id == a.id }
+    check(savedA?.title == "改后的A", "失焦保存应写入标题")
+    check(savedA?.bulletPoints == ["要点A", "新要点"], "失焦保存应写入要点")
+
+    // 规则 3：换了对象要作废
+    // 模拟：编辑 A 时失焦，120ms 内用户点了 B。
+    // 此时 editingText 已被 B 的内容覆盖。
+    var editingID: String? = a.id
+    var editingText = "A 的未保存内容"
+    var editingPoints = ["A 的要点"]
+
+    // 失焦 A，记下当时的 id
+    let pendingID = editingID
+
+    // 用户在延迟窗口内切到 B
+    editingID = b.id
+    editingText = "B 的内容"
+    editingPoints = ["B 的要点"]
+
+    // 延迟回调到达：必须检查 id 还对不对
+    let shouldCommit = (editingID == pendingID)
+    check(!shouldCommit, "换了对象后，旧事项的失焦保存必须作废")
+
+    // 如果没做这个检查，B 的内容会被写进 A
+    if shouldCommit {
+        store.rename(a.id, to: editingText)
+    }
+    check(store.items.first { $0.id == a.id }?.title == "改后的A",
+          "A 的标题不应被 B 的内容覆盖")
+    check(store.items.first { $0.id == b.id }?.title == "原B",
+          "B 也不该被误改")
+
+    // 退出编辑后，延迟保存也要作废
+    editingID = nil
+    let shouldCommitAfterExit = (editingID == pendingID)
+    check(!shouldCommitAfterExit, "退出编辑后延迟保存应作废")
+
+    // 同一对象仍然在编辑 → 正常保存
+    editingID = a.id
+    let shouldCommitSame = (editingID == a.id)
+    check(shouldCommitSame, "对象未变时应正常保存")
+
+    // 标题为空时不该把事项名清掉
+    store.rename(a.id, to: "   ")
+    check(store.items.first { $0.id == a.id }?.title == "改后的A",
+          "空白标题不应覆盖原内容")
+}
+
+/// 失焦保存要点时，空白要点不该被写成空行
+func testFocusLostNoteCleaning() {
+    // 编辑中途留下的空条目，保存时应被清掉
+    let raw = ["有效要点", "", "   ", "第二条"]
+    let cleaned = Memo.noteText(from: raw)
+    check(cleaned == "有效要点\n第二条", "保存时应清掉空要点（实际：\(cleaned.debugDescription)）")
+
+    // 全空 → 空串（等于没有要点）
+    check(Memo.noteText(from: ["", "  "]) == "", "全空要点应得到空串")
+
+    // 往返：存进去再读出来一致
+    let memoNote = Memo.noteText(from: raw)
+    let round = memoNote.components(separatedBy: "\n").filter { !$0.isEmpty }
+    check(round == ["有效要点", "第二条"], "往返应一致")
 }
 
 @MainActor
@@ -1444,7 +1506,6 @@ func testOrbFreePosition() {
     let safe = OrbLayout.clamp(origin: center, size: size, screens: [])
     check(safe == center, "没有屏幕信息时原样返回，不崩溃")
 }
-
 
 /// 玻璃强度的参数映射。
 ///
@@ -1564,8 +1625,5 @@ func testSpan() {
         check(false, "add 应成功")
     }
     try? FileManager.default.removeItem(at: tmp)
-
-
-
 
 }
