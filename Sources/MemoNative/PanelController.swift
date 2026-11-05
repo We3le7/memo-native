@@ -82,6 +82,8 @@ final class PanelController {
     private var store: MemoStore?
     private var settings: AppSettings?
     private var escapeMonitor: Any?
+    /// 点击监控：点编辑区之外就结束编辑
+    private var clickMonitor: Any?
     private var observers: [NSObjectProtocol] = []
     private var previousApp: NSRunningApplication?
     private var isHiding = false
@@ -222,6 +224,7 @@ final class PanelController {
             NotificationCenter.default.post(name: .memoFocusInput, object: nil)
         }
         installEscapeMonitor()
+        installClickMonitor()
     }
 
     private func buildPanel(store: MemoStore, settings: AppSettings) {
@@ -602,10 +605,57 @@ final class PanelController {
         }
     }
 
+    /// 点击别处就结束编辑。
+    ///
+    /// 为什么不能只靠 @FocusState 的 onChange：
+    /// 点击一片空白（不是另一个可聚焦控件）时，TextField 根本
+    /// 不会失焦，onChange 也就不会触发。用户点了别处，
+    /// 界面却还停在编辑态，这不符合"点哪就是哪"的直觉。
+    ///
+    /// 这里在 App 层监听鼠标按下，用 hitTest 判断这一下落在
+    /// 编辑控件内还是外面。之所以用 hitTest 而不是比对坐标：
+    /// 编辑区里除了标题框还有要点输入框、加号按钮，
+    /// 手写坐标稍一改动就会错判。
+    private func installClickMonitor() {
+        guard clickMonitor == nil else { return }
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { event in
+            // 只处理面板里的点击
+            guard let panel = PanelController.shared.panel,
+                  panel.isVisible,
+                  event.window === panel else { return event }
+
+            // 同步判定，不能扔进 Task：
+            // 异步执行时这次点击已经被 SwiftUI 处理完
+            //（可能已经进入另一条事项的编辑），
+            // 再回头退出就会把刚进的编辑关掉。
+            //
+            // do 而不是 MainActor.assumeIsolated：
+            // 后者是 macOS 14 才有的 API，本 App 部署到 13。
+            // 这个 monitor 本来就装在主线程，直接调用即可。
+            PanelController.shared.handleMouseDown(in: panel, event: event)
+            return event
+        }
+    }
+
+    /// 判断这次点击是否落在"编辑区"里。
+    ///
+    /// 用登记表比坐标，而不是 hitTest + 响应链：
+    /// 编辑区是 SwiftUI 里的一块，AppKit 这侧看不到它的边界，
+    /// 只能让那块视图自己把矩形报上来。
+    private func handleMouseDown(in panel: NSPanel, event: NSEvent) {
+        if !EditingRegionRegistry.shared.contains(windowPoint: event.locationInWindow) {
+            NotificationCenter.default.post(name: .memoClickOutsideEditing, object: nil)
+        }
+    }
+
     private func removeEscapeMonitor() {
         if let monitor = escapeMonitor {
             NSEvent.removeMonitor(monitor)
             escapeMonitor = nil
+        }
+        if let monitor = clickMonitor {
+            NSEvent.removeMonitor(monitor)
+            clickMonitor = nil
         }
     }
 

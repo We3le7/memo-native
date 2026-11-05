@@ -506,3 +506,40 @@ extension UILogic {
         points.isEmpty ? "" : "\(points.count) 条要点"
     }
 }
+
+// MARK: - 点击区域判定
+
+extension UILogic {
+    /// 一个矩形，用于表示"编辑区"在窗口里的位置。
+    /// 不直接用 CGRect，是为了让判定逻辑能进测试（不依赖 AppKit）。
+    struct Region: Equatable {
+        var x: Double
+        var y: Double
+        var width: Double
+        var height: Double
+    }
+
+    /// 判定阈值：往外放一点。
+    ///
+    /// 编辑区的边缘常常正好贴着可点控件（比如要点行的加号），
+    /// 用户"点在边缘上"的心理预期是还算在里面。
+    /// 放到 2pt 足够宽容，又不会把隔壁的删除键也吃进来。
+    static let regionTolerance: Double = 2
+
+    /// 点是否落在任一区域内。
+    ///
+    /// 空区域列表返回 false——没有正在编辑的东西时，
+    /// 任何点击都算"点在别处"，这是对的。
+    static func hitTest(point: (x: Double, y: Double), regions: [Region]) -> Bool {
+        regions.contains { region in
+            // 宽高为 0 的区域视为无效：视图还没布局好时报上来的
+            // 就是这种值，拿它判定会一律判错。
+            guard region.width > 0, region.height > 0 else { return false }
+            let t = regionTolerance
+            return point.x >= region.x - t
+                && point.x <= region.x + region.width + t
+                && point.y >= region.y - t
+                && point.y <= region.y + region.height + t
+        }
+    }
+}

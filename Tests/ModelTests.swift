@@ -38,6 +38,7 @@ testSpan()
     testBulletLimitIsThree()
     testAddButtonGating()
     testFocusLostCommitRules()
+    testClickRegionHitTest()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -1393,6 +1394,68 @@ func testFocusLostNoteCleaning() {
     let memoNote = Memo.noteText(from: raw)
     let round = memoNote.components(separatedBy: "\n").filter { !$0.isEmpty }
     check(round == ["有效要点", "第二条"], "往返应一致")
+}
+
+@MainActor
+
+
+/// 点击区域判定：点在编辑区内则保留编辑，否则退出。
+///
+/// 这条判定的两个方向都会造成可见 bug：
+///   · 该"内"判成"外" → 点自己的要点框，编辑被关掉
+///   · 该"外"判成"内" → 点别处，编辑不退出，用户以为卡住了
+func testClickRegionHitTest() {
+    let r = UILogic.Region(x: 100, y: 200, width: 300, height: 80)
+
+    func hit(_ x: Double, _ y: Double) -> Bool {
+        UILogic.hitTest(point: (x: x, y: y), regions: [r])
+    }
+
+    // 内部：四个角 + 中心
+    check(hit(150, 250), "中心应命中")
+    check(hit(101, 201), "左上角应命中")
+    check(hit(399, 279), "右下角应命中")
+    check(hit(100, 200), "基准点应命中")
+    check(hit(400, 280), "对角点应命中")
+
+    // 外部：明显在框外
+    check(!hit(50, 250), "左侧外应不命中")
+    check(!hit(450, 250), "右侧外应不命中")
+    check(!hit(150, 100), "上方外应不命中")
+    check(!hit(150, 400), "下方外应不命中")
+
+    // 容差：边界外 2pt 内仍算命中
+    let t = UILogic.regionTolerance
+    check(t > 0, "容差应为正数")
+    check(hit(100 - t + 0.5, 250), "边界外一点点应命中（容差内）")
+    check(!hit(100 - t - 1, 250), "超出容差应不命中")
+    check(hit(400 + t - 0.5, 250), "右边界外一点点应命中")
+    check(!hit(400 + t + 1, 250), "右边界超出容差应不命中")
+
+    // 多个区域：任意一个命中即可
+    let r2 = UILogic.Region(x: 500, y: 200, width: 100, height: 80)
+    check(UILogic.hitTest(point: (x: 550, y: 250), regions: [r, r2]), "第二个区域应命中")
+    check(!UILogic.hitTest(point: (x: 450, y: 250), regions: [r, r2]), "两区域之间应不命中")
+
+    // 空列表：任何点击都算"外面"
+    check(!UILogic.hitTest(point: (x: 150, y: 250), regions: []),
+          "没有编辑区时任何点击都不命中")
+
+    // 宽高为 0：无效区域，不该命中
+    // 视图还没布局时会上报这种值，拿它判定会一律判错
+    let zero = UILogic.Region(x: 100, y: 200, width: 0, height: 0)
+    check(!UILogic.hitTest(point: (x: 100, y: 200), regions: [zero]),
+          "零尺寸区域不应命中")
+    // 该点落在有效区域 r 的边界上，本就该命中——
+    // 零尺寸区域不能让它变成"不命中"
+    check(UILogic.hitTest(point: (x: 100, y: 200), regions: [r, zero]),
+          "零尺寸区域不应让有效区域的命中失效")
+
+    // 负坐标（窗口坐标系原点在左下，但内容可能溢出为负）
+    let neg = UILogic.Region(x: -50, y: -20, width: 100, height: 40)
+    check(UILogic.hitTest(point: (x: -10, y: 0), regions: [neg]), "负坐标区域应能命中")
+    check(UILogic.hitTest(point: (x: -50, y: -20), regions: [neg]), "负坐标边界应命中")
+    check(!UILogic.hitTest(point: (x: -100, y: 0), regions: [neg]), "负坐标区域外应不命中")
 }
 
 @MainActor

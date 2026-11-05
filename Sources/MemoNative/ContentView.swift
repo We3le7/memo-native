@@ -243,6 +243,11 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .memoPanelWillFold)) { _ in
             commitEditingIfNeeded()
         }
+        // 点到编辑区之外 → 结束编辑。
+        // 不能只靠 @FocusState：点一片空白时 TextField 根本不会失焦。
+        .onReceive(NotificationCenter.default.publisher(for: .memoClickOutsideEditing)) { _ in
+            exitEditingIfNeeded()
+        }
         // 展开形变交给 Core Animation（见 PanelController.playUnfold/playFold）。
         //
         // 原来这里是 .scaleEffect(...) + .opacity(...)，由 @Published 逐帧驱动：
@@ -769,6 +774,7 @@ struct ContentView: View {
                 }
             }
         )
+        .editingRegion(ui.editingID == item.id)
         .modifier(CardFlyIn(index: index, enabled: !reduceMotion))
         .transition(
             .asymmetric(
@@ -859,6 +865,7 @@ struct ContentView: View {
             },
             onFocusInPoints: { ui.cancelPendingFocusLost() }
         )
+        .editingRegion(ui.editingID == item.id)
         // 增删时整行淡入并轻微上移，而不是瞬间闪现
         .transition(
             .asymmetric(
@@ -990,6 +997,18 @@ struct ContentView: View {
     /// 面板一收，窗口失去 key，SwiftUI 的 @FocusState 未必会
     /// 走 onChange（窗口级失焦和控件级失焦不是一回事）。
     /// 用户改了一半标题、点别处让面板收起——不存就等于白改。
+    /// 点到别处：保存并退出编辑。
+    ///
+    /// 和失焦保存走同一条路（commitEdit），
+    /// 区别只是触发源不同——这里是明确的点击，不需要再延迟判断。
+    private func exitEditingIfNeeded() {
+        guard let id = ui.editingID,
+              let item = store.items.first(where: { $0.id == id }) else { return }
+        // 取消可能在排队的失焦保存，避免同一件事存两遍
+        ui.cancelPendingFocusLost()
+        commitEdit(item)
+    }
+
     private func commitEditingIfNeeded() {
         guard let id = ui.editingID,
               let item = store.items.first(where: { $0.id == id }) else { return }
@@ -1211,7 +1230,123 @@ struct FilterSegment: View {
 
 // MARK: - 单行
 
-// MARK: - 要点编辑器
+// MARK: - 编辑区标记
+
+extension View {
+    /// 编辑态时，把整块区域登记为"编辑区"。
+    ///
+    /// 必须覆盖**整个**编辑区域，不能只盖标题框——
+    /// 点了要点输入框却被判成"点在外面"，编辑会立刻被关掉，
+    /// 用户连一条要点都加不进去。
+    func editingRegion(_ active: Bool) -> some View {
+        overlay(alignment: .topLeading) {
+            if active {
+                GeometryReader { _ in
+                    // .frame(maxWidth:.infinity, maxHeight:.infinity)
+                    // 不能省：NSViewRepresentable 默认按自身尺寸布局，
+                    // GeometryReader 里不撑开就会拿到 0 尺寸，
+                    // 登记上去的矩形是空的，判定永远为"点在外面"。
+                    EditingRegionMarker()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .allowsHitTesting(false)
+            }
+        }
+    }
+}
+
+// MARK: - 编辑区标记
+
+/// 记录"编辑区"在窗口里的位置。
+///
+/// 目的：点击监控要能回答"这一下是点在编辑里，还是点在外面"。
+///
+/// 一开始想走响应链——给标记视图设个 layer name，点击后沿
+/// superview 往上找。行不通：标记是叠加层、不是 TextField 的祖先，
+/// 而且它为了让鼠标穿透必须 hitTest 返回 nil，那就更不会出现在
+/// 命中链里了。
+///
+/// 改成登记表：标记视图自己登记矩形，点击时比一下坐标。
+final class EditingRegionRegistry {
+    static let shared = EditingRegionRegistry()
+
+    /// 当前处于编辑态的区域（窗口坐标）。通常只有 0 或 1 个。
+    private var regions: [ObjectIdentifier: NSRect] = [:]
+
+    func register(_ view: NSView) {
+        regions[ObjectIdentifier(view)] = frameInWindow(view)
+    }
+
+    func unregister(_ view: NSView) {
+        regions.removeValue(forKey: ObjectIdentifier(view))
+    }
+
+    /// 刷新（布局变化后矩形会变）
+    func refresh(_ view: NSView) {
+        guard regions[ObjectIdentifier(view)] != nil else { return }
+        regions[ObjectIdentifier(view)] = frameInWindow(view)
+    }
+
+    /// 点在这个点上算不算"在编辑区内"。
+    /// 判定本身交给 UILogic（纯逻辑，可测）。
+    func contains(windowPoint: NSPoint) -> Bool {
+        let regions = regions.values.compactMap { rect -> UILogic.Region? in
+            guard rect.width > 0, rect.height > 0 else { return nil }
+            return UILogic.Region(
+                x: Double(rect.origin.x),
+                y: Double(rect.origin.y),
+                width: Double(rect.width),
+                height: Double(rect.height)
+            )
+        }
+        return UILogic.hitTest(
+            point: (x: Double(windowPoint.x), y: Double(windowPoint.y)),
+            regions: regions
+        )
+    }
+
+    func clear() { regions.removeAll() }
+
+    private func frameInWindow(_ view: NSView) -> NSRect {
+        guard let window = view.window else { return .zero }
+        let inWindow = view.convert(view.bounds, to: nil)
+        // convert(to: nil) 给的是窗口坐标
+        _ = window
+        return inWindow
+    }
+}
+
+/// 把一块 SwiftUI 视图登记为"编辑区"。
+///
+/// 透明、不拦截鼠标，只负责把自己的矩形报上去。
+struct EditingRegionMarker: NSViewRepresentable {
+    func makeNSView(context: Context) -> Marker { Marker() }
+    func updateNSView(_ nsView: Marker, context: Context) { nsView.refresh() }
+
+    final class Marker: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window != nil {
+                EditingRegionRegistry.shared.register(self)
+            } else {
+                EditingRegionRegistry.shared.unregister(self)
+            }
+        }
+
+        override func layout() {
+            super.layout()
+            refresh()
+        }
+
+        func refresh() {
+            EditingRegionRegistry.shared.refresh(self)
+        }
+    }
+}
+
+// MARK: - 要点编辑器// MARK: - 要点编辑器
 
 /// 已有事项的要点编辑区：列出全部要点，可改可删，底部一行添加。
 ///
@@ -2234,6 +2369,8 @@ extension Notification.Name {
     static let memoOpenSettings = Notification.Name("memo.openSettings")
     /// 面板即将折叠：给正在编辑的控件一个保存的机会
     static let memoPanelWillFold = Notification.Name("memo.panelWillFold")
+    /// 点到编辑区之外：结束当前编辑
+    static let memoClickOutsideEditing = Notification.Name("memo.clickOutsideEditing")
 }
 
 // MARK: - 工期选择（与优先级同构）
