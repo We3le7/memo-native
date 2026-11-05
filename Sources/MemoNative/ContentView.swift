@@ -162,6 +162,7 @@ struct ContentView: View {
     @MainActor
     final class PressState: ObservableObject {
         @Published var pressed = false
+        @Published var hovering = false
     }
 
     /// 能不能写入：标题非空即可。
@@ -412,27 +413,38 @@ struct ContentView: View {
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
                 }
 
-                // 写入按钮：标题框右侧的主操作。
+                // 确认按钮：标题框右侧的主操作。
                 //
                 // 之前只有一个 ↵ 键帽提示"可以按回车"，但那需要用户
                 // 把焦点放回标题框再按。按钮是直接可点的，
-                // 而且它把"写入备忘录"这件事变成了一个明确动作，
+                // 而且它把"记下这件事"变成了一个明确动作，
                 // 而不是一个要记住的快捷键。
                 //
-                // 图标用箭头向下入托盘：动作方向是"把内容收进去"，
-                // 比一个勾更贴切（勾暗示"确认/完成"，这里是"收录"）。
+                // 配色走中性墨色，不用强调绿。
+                // 绿色在这个界面里是"状态"（未完成事项的强调、
+                // 低优先级的色标），不是"按钮"。一个常驻按钮染成
+                // 强调色，会把用户的注意力一直吸在一个每次都要点、
+                // 但已经不需要找的地方，也抢掉输入框本身的视觉重心。
+                //
+                // 做法是"深色实心 + 反色文字"：在深色和浅色模式下
+                // 都成立，因为墨色本来就是跟随外观翻转的，
+                // 反色文字自然跟着一起翻。
                 Button(action: commit) {
                     HStack(spacing: 4) {
-                        Image(systemName: "arrow.down.to.line")
-                            .font(.system(size: 9.5, weight: .bold))
-                        Text("写入")
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                        Text("确认")
                             .font(.system(size: 11, weight: .semibold))
                     }
-                    .foregroundStyle(canWrite ? Color.white : Theme.inkQuaternary)
+                    .foregroundStyle(canWrite ? Theme.panelBackgroundInverted : Theme.inkQuaternary)
                     .padding(.horizontal, 10)
                     .frame(height: 24)
                     .background(
-                        Capsule().fill(canWrite ? Theme.accent : Theme.surfaceHover)
+                        Capsule().fill(
+                            canWrite
+                                ? AnyShapeStyle(Theme.ink.opacity(0.88))
+                                : AnyShapeStyle(Theme.surfaceHover)
+                        )
                     )
                     .overlay(
                         Capsule().strokeBorder(
@@ -443,7 +455,13 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canWrite)
-                .help("写入备忘录（回车）")
+                .help("确认并记下（回车）")
+                // 中性按钮比强调色按钮更需要悬停反馈：
+                // 没有颜色托底，"能点"这件事只能靠明度变化表达。
+                .brightness(writeBtn.hovering && canWrite ? 0.05 : 0)
+                .onHover { inside in
+                    withAnimation(Theme.easeFast) { writeBtn.hovering = inside }
+                }
                 .scaleEffect(writeBtn.pressed ? 0.95 : 1)
                 .animation(Theme.springBouncy, value: writeBtn.pressed)
                 .simultaneousGesture(

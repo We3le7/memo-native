@@ -71,6 +71,20 @@ enum Theme {
     static let stroke = Color.primary.opacity(0.075)
     static let strokeStrong = Color.primary.opacity(0.12)
 
+    /// 实心按钮上的文字色：面板背景本身。
+    ///
+    /// 按钮是"墨色实心 + 反色文字"，那反色就该是面板底色——
+    /// 这样文字看起来像是从实心底上"凿"出来的，
+    /// 而不是涂了一层别的颜色。
+    /// 跟随外观翻转：深色模式取深灰、浅色模式取浅灰。
+    static var panelBackgroundInverted: Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            let c = isDark ? UILogic.darkPanelBackground : UILogic.lightPanelBackground
+            return NSColor(srgbRed: c.0, green: c.1, blue: c.2, alpha: 1)
+        })
+    }
+
     // 动效
     //
     // 三档曲线，用途分明：

@@ -31,6 +31,7 @@ testSpan()
     testNewMemoDefaultsToToday()
     testSpanPickerMatchesPriority()
     testPaletteContrast()
+    testConfirmButtonContrast()
     testCardGrid()
     testBulletPoints()
     testPriorityFirstSorting()
@@ -1217,6 +1218,59 @@ func testBulletLimitIsThree() {
     // normalizeBullets 也要遵守上限
     let many = (0..<10).map { "x\($0)" }
     check(UILogic.normalizeBullets(many).count == 3, "normalizeBullets 应截断到 3")
+}
+
+@MainActor
+
+
+/// 确认按钮：墨色实心 + 反色文字，两种外观下都要能读。
+///
+/// 按钮从强调绿改成中性墨色之后，可用性完全押在明度差上——
+/// 没有色相帮忙区分，对比度不达标就是真的看不清。
+/// 把它钉成测试，免得以后调 token 时悄悄失效。
+func testConfirmButtonContrast() {
+    // 与 DesignSystem 里的定义保持一致
+    let darkPanel = UILogic.darkPanelBackground
+    let lightPanel = UILogic.lightPanelBackground
+
+    for (name, panel, ink) in [("深色", darkPanel, (1.0, 1.0, 1.0)),
+                               ("浅色", lightPanel, (0.0, 0.0, 0.0))] {
+        // 按钮实心底 = 墨色 88% 覆盖在面板上
+        let fill = UILogic.blend(ink, panel, 0.88)
+        // 文字色 = 面板背景（反色）
+        let r = UILogic.contrastRatio(panel, fill)
+
+        check(r >= 4.5,
+              "\(name)模式确认按钮文字应 ≥4.5:1，实测 \(String(format: "%.2f", r))")
+
+        // 按钮与周围面板也要能区分开——否则看不出这里有个按钮
+        let vsPanel = UILogic.contrastRatio(fill, panel)
+        check(vsPanel >= 3.0,
+              "\(name)模式按钮底与面板应可辨（≥3.0），实测 \(String(format: "%.2f", vsPanel))")
+    }
+
+    // 禁用态：文字用 inkQuaternary(24%)，只需要"看得出不可用"，不要求高对比
+    for (name, panel, ink) in [("深色", darkPanel, (1.0, 1.0, 1.0)),
+                               ("浅色", lightPanel, (0.0, 0.0, 0.0))] {
+        let sur = UILogic.blend(ink, panel, 0.055)   // surfaceHover
+        let txt = UILogic.blend(ink, panel, 0.24)    // inkQuaternary
+        let r = UILogic.contrastRatio(txt, sur)
+        check(r >= 1.2,
+              "\(name)模式禁用态文字应仍可辨认，实测 \(String(format: "%.2f", r))")
+    }
+
+    // 反色文字必须带方向：深色面板配浅字、浅色面板配深字
+    func lum(_ c: (Double, Double, Double)) -> Double {
+        UILogic.relativeLuminance(r: c.0, g: c.1, b: c.2)
+    }
+    check(lum(darkPanel) < lum(lightPanel), "深色面板应比浅色面板暗")
+
+    let darkFill = UILogic.blend((1.0,1.0,1.0), darkPanel, 0.88)
+    let lightFill = UILogic.blend((0.0,0.0,0.0), lightPanel, 0.88)
+    check(lum(darkFill) > lum(darkPanel),
+          "深色模式下按钮底应比面板亮（实心是浅色块）")
+    check(lum(lightFill) < lum(lightPanel),
+          "浅色模式下按钮底应比面板暗（实心是深色块）")
 }
 
 @MainActor
