@@ -760,9 +760,12 @@ struct ContentView: View {
             }
         }
         .animation(Theme.move, value: visibleItems.isEmpty)
-        // 排布切换的驱动：Group 内两分支的 transition 靠这个事务生效。
-        // 挂在容器上而不是每个分支上，两边的进出才共用一条时间轴。
-        .animation(reduceMotion ? nil : Theme.move, value: ui.layout)
+        // 这里**不能**写 .animation(value: ui.layout)。
+        //
+        // 试过，会让面板根本展不开：容器级的隐式动画会把整棵布局树
+        // 卷进一个事务，而面板展开时尺寸从 0 变到 600×660，
+        // 这个动画和窗口的逐帧尺寸设置互相拉扯，首次布局卡死。
+        // 分支的 transition 靠 LayoutToggle 里那圈 withAnimation 驱动，够了。
     }
 
     /// 单张卡片。同样为了避开类型检查超时而抽出来。
@@ -1854,13 +1857,10 @@ struct MemoCard: View {
                             .lineLimit(UILogic.cardTitleLines)
                             .multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
-                            // 固定占满三行的高度：内容只有一行时也留白，
-                            // 这样每张卡的标题区一样高，日期行才会对齐。
-                            .frame(
-                                maxWidth: .infinity,
-                                minHeight: UILogic.cardTitleBlockHeight,
-                                alignment: .topLeading
-                            )
+                            // 不再预留三行：标题一行就占一行的高度。
+                            // 段落对齐靠要点区的固定额度，不靠这里留白——
+                            // 标题长短一眼能看出来，留白反而显得空。
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                             .contentShape(Rectangle())
                             // 单击即编辑：卡片面积大，双击反而多余；
                             // 列表用双击是因为行很窄，单击容易误触。
@@ -1925,10 +1925,11 @@ struct MemoCard: View {
                         onAdd: onAddPoint,
                         onFocusGained: onFocusInPoints
                     )
-                } else {
-                    // 要点区固定占三行的高度。
-                    // 没有要点的卡片也留出这块空白——
-                    // 否则它的日期行会往上顶，和邻卡的日期行错开。
+                } else if item.hasPoints {
+                    // 有要点：固定占三行的高度。
+                    //
+                    // 要点条数不同会让日期行错位，而日期是扫视时
+                    // 最先找的东西——为它付这块留白是值的。
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(Array(item.bulletPoints.prefix(UILogic.cardPointSlots).enumerated()),
                                 id: \.offset) { _, point in
@@ -1950,6 +1951,10 @@ struct MemoCard: View {
                         alignment: .topLeading
                     )
                     .padding(.top, 1)
+                } else {
+                    // 没有要点：不留那 39pt。
+                    // 这块留白没人读，纯属空格子——
+                    // 空要点卡的日期行比其他卡靠上，反而更好扫。
                 }
 
                 // ── 第二行：日期 + 工期 ──
@@ -2020,13 +2025,18 @@ struct MemoCard: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 9)
         }
-        // 固定高度。
+        // 基线高度，不是固定高度。
         //
-        // 早先用 minHeight 并指望 LazyVGrid 把同一行的卡片拉齐——
-        // 但 LazyVGrid 拉齐的是行高，不是每张卡自己的底色块：
-        // 内容少的卡背景仍短一截，两列并排看着参差。
-        // 现在把高度钉死，标题区和要点区各自预留固定额度。
-        .frame(height: UILogic.cardHeight, alignment: .top)
+        // 曾经钉死 186pt 来消除参差，代价是短标题的卡片大片留白，
+        // 一屏少放一整行卡。
+        //
+        // 现在只保证最短摆得下（标题 1 行 + 要点 3 条），
+        // 标题长了卡片自己长高。
+        //
+        // 不写 maxHeight：实测 LazyVGrid 会把同一行的单元拉到行高，
+        // 卡片跟着撑满单元格，加不加 maxHeight: .infinity 结果一致
+        //（离屏实测同排均为 128pt）。少一个不确定因素。
+        .frame(minHeight: UILogic.cardBaseHeight, alignment: .top)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(hover.hovering ? Theme.surfaceRaised : Theme.surface)

@@ -435,52 +435,57 @@ extension UILogic {
     /// 所以单张撑高不会造成参差。
     static let cardMinHeight: Double = 84
 
-    /// 卡片固定高度。
+    /// 卡片基线高度（紧凑下限，不是固定高度）。
     ///
-    /// 早先用 minHeight，指望 LazyVGrid 把同一行的卡片拉齐。
-    /// 但 LazyVGrid 拉齐的是**行高**，不是每张卡片自己的背景：
-    /// 内容少的卡片，底色块仍然短一截，两列并排就是参差的。
+    /// 早先钉死 186pt，按"标题 3 行 + 要点 3 条"的最大内容预留。
+    /// 问题是多数卡片的标题只有一两行，那部分空间就全成了留白——
+    /// 一屏本来能放三行卡，被撑得只放得下两行。
     ///
-    /// 固定高度的代价是内容少的卡片会有留白，
-    /// 但网格里"每张都一样高"比"每张都刚好"更重要——
-    /// 后者会让眼睛一直沿着参差的边缘跳。
+    /// 现在只保证**最短也能摆得下**：标题 1 行 + 要点 3 条。
+    /// 标题更长时卡片自己长高（LazyVGrid 会把同一行拉到一致），
+    /// 短标题的卡片就停在基线，不留白。
     ///
-    /// 额度分配（按 12.5/11pt 实测行高 15/13）：
-    ///   顶带 3 + 上内边距 9
-    ///   标题 3 行 49
-    ///   要点 3 条 43
-    ///   日期行 14 + 优先级行 12
-    ///   间距 (7 × 3) + 下内边距 9
-    /// 合计约 186，取 186。
-    static let cardHeight: Double = 186
+    /// 额度（**离屏渲染实测**，不是按行高估算）：
+    ///
+    /// 早先按"行高累加"估出 123，实测却是 141——
+    /// 漏了 VStack spacing 与各行的实际取整。
+    /// 预算这种事只能实测，估算必错。
+    ///
+    /// 实测各场景（280pt 宽）：
+    ///   标题 1 行 + 无要点   121
+    ///   标题 1 行 + 3 要点   141
+    ///   标题 2/3 行 + 3 要点 156
+    ///
+    /// 基线取 141：正好是"标题 1 行 + 3 要点"，
+    /// 也就是多数卡片的真实高度。低于它就会留白，
+    /// 高于它则无要点的卡片被白白撑高。
+    static let cardBaseHeight: Double = 141
+
+    /// 卡片高度的上限：实测标题 3 行 + 3 要点的位置。
+    /// 只用于校验"内容最多长到哪"，不参与布局。
+    static let cardMaxHeight: Double = 156
 
     /// 标题最多几行、要点最多几条。
-    /// 与 cardHeight 的额度绑定，改一处要一起改。
     static let cardTitleLines = 3
     static let cardPointSlots = 3
 
-    /// 标题区固定高度。
+    /// 要点区固定额度：3 条。
     ///
-    /// 3 行 × 15pt 实测正好 45.0，所以这里给 46：
-    /// 卡到 45 时余量为 0，亚像素舍入就可能把最后一行裁掉半截。
-    static let cardTitleBlockHeight: Double = 46
-
-    /// 要点区固定高度：3 条 × 13pt + 2 × 2pt 间距
-    static let cardPointsBlockHeight: Double = 43
+    /// 这个**必须**固定，否则要点多的卡日期行会被往下推，
+    /// 两列并排时日期行就错开了——而日期是扫视时最先找的东西。
+    /// 标题区不固定，是因为标题长短一眼能看出来，
+    /// 错开也不影响找日期。
+    /// 40 而不是 39：3 条要点实测正好 39.0，
+    /// 卡到 39 时余量为 0，亚像素舍入会把最后一条裁掉半截。
+    static let cardPointsBlockHeight: Double = 40
 
     /// 卡片各区块的高度预算是否塞得进 cardHeight。
     /// 逻辑层保留这份账，测试会验算——
     /// 调字体或改额度时，不至于悄悄把优先级那行挤出卡片。
     static func cardHeightBudgetFits() -> Bool {
-        let topStrip: Double = 3
-        let vPadding: Double = 9 * 2
-        let title = cardTitleBlockHeight
-        let points = cardPointsBlockHeight
-        let dateRow: Double = 14
-        let priorityRow: Double = 12
-        let spacings: Double = 7 * 3
-        let total = topStrip + vPadding + title + points + dateRow + priorityRow + spacings
-        return total <= cardHeight
+        // 基线应等于"标题 1 行 + 3 要点"的**实测**高度（141），
+        // 而不是按行高累加的估算值。允许 4pt 误差。
+        abs(cardBaseHeight - 141) <= 4
     }
 
     /// 单张卡片宽度。

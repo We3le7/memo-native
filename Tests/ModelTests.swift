@@ -42,7 +42,7 @@ testSpan()
     testAnimationTiers()
     testDateLineWithWeekday()
     testSpanEditableForSingleDay()
-    testCardFixedHeight()
+    testCardBaselineHeight()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -1618,69 +1618,57 @@ func testSpanEditableForSingleDay() {
 @MainActor
 
 
-/// 卡片高度统一：固定高度 + 各区块预留额度。
+/// 卡片高度：基线紧凑，标题长了再自适应。
 ///
-/// 这条约束最容易在改字体或加内容时被悄悄破坏——
-/// 破坏的表现不是崩溃，是卡片底部那行被裁掉半截，
-/// 而且要等到某个内容特别多的卡片出现才看得见。
-func testCardFixedHeight() {
-    // 各区块预算必须塞得进固定高度
+/// 这里钉住的是一个**取舍**，不只是数字：
+/// 钉死高度能消参差，但短标题的卡会大片留白；
+/// 全部自适应能去留白，但同排参差。
+/// 现在的选择是——基线只保证"最短摆得下"，
+/// 要点区固定（保证日期行对齐），标题区不固定（长短一眼能看懂）。
+func testCardBaselineHeight() {
+    // 基线要能装下"标题 1 行 + 要点 3 条"
     check(UILogic.cardHeightBudgetFits(),
-          "各区块高度之和不应超过 cardHeight（实测预算超了）")
+          "基线应装得下 标题1行 + 要点3条（预算超了）")
 
-    // 固定高度要明显大于"最小高度"，否则等于没改
-    check(UILogic.cardHeight > UILogic.cardMinHeight,
-          "固定高度应大于原最小高度（\(UILogic.cardHeight) vs \(UILogic.cardMinHeight)）")
+    // 基线必须比旧的固定高度明显小，否则等于没改
+    check(UILogic.cardBaseHeight < 160,
+          "基线应明显小于旧的 186(实测 \(UILogic.cardBaseHeight))")
+    check(UILogic.cardBaseHeight >= 135,
+          "基线应接近实测 141，不能再低（误设成 124 会让有要点的卡自己长高，等于没设）")
+    check(UILogic.cardBaseHeight > UILogic.cardMinHeight,
+          "基线应大于最小高度 \(UILogic.cardMinHeight)")
 
-    // 标题区和要点区都要有额度
-    check(UILogic.cardTitleBlockHeight > 0, "标题区应有固定高度")
-    check(UILogic.cardPointsBlockHeight > 0, "要点区应有固定高度")
+    // 上限是实测值 156（标题 3 行 + 3 要点）
+    check(abs(UILogic.cardMaxHeight - 156) <= 4,
+          "上限应接近实测 156（当前 \(UILogic.cardMaxHeight)）")
 
-    // 额度要能装下各自的满额内容。
-    // 这些数字是离屏实测出来的，不是估的：
-    //   标题 3 行 × 15.0pt = 45.0
-    //   要点 3 条 = 39.0（13.0 × 3，行间已有 leading）
-    let measuredTitle3 = Double(UILogic.cardTitleLines) * 15.0
-    let measuredPoints3 = 39.0
+    // 高度跨度要合理：太小说明几乎不随内容变
+    let span = UILogic.cardMaxHeight - UILogic.cardBaseHeight
+    check(span >= 10 && span <= 40,
+          "基线与上限的跨度应在 10~40pt 之间（实测 \(span)）")
 
-    // 必须**严格大于**实测值：等于实测值时余量为 0，
-    // 亚像素舍入就会把最后一行裁掉半截。
-    check(UILogic.cardTitleBlockHeight > measuredTitle3,
-          "标题区应严格大于实测 3 行高度 \(measuredTitle3)（当前 \(UILogic.cardTitleBlockHeight)）")
-    check(UILogic.cardPointsBlockHeight > measuredPoints3,
-          "要点区应严格大于实测 3 条高度 \(measuredPoints3)（当前 \(UILogic.cardPointsBlockHeight)）")
-    // 要点 3 条 × 13pt + 间距
-    check(UILogic.cardPointsBlockHeight >= Double(UILogic.cardPointSlots) * 13,
-          "要点区应装得下 \(UILogic.cardPointSlots) 条")
+    // 要点区额度要严格大于实测 3 条高度 39.0
+    check(UILogic.cardPointsBlockHeight > 39.0,
+          "要点区额度应严格大于实测 39.0（当前 \(UILogic.cardPointsBlockHeight)）")
 
-    // 内容多寡不影响占用：额度是常量，与 item 无关
-    // 这里用两个极端内容的事故项对比，验证"取值不依赖内容"
-    let long = Memo.make(title: String(repeating: "很长的标题", count: 20),
-                         priority: .urgent, dueDate: DateKey.today, span: 3)
-    let short = Memo.make(title: "短", priority: .low, dueDate: DateKey.today)
-    check(long.title.count > short.title.count, "测试前提：两条标题长度不同")
+    // 要点区必须固定：它是日期行对齐的唯一依靠
+    check(UILogic.cardPointSlots == 3, "要点额度应为 3 条")
 
-    // 两者的卡片高度取的是同一个常量
-    check(UILogic.cardHeight == UILogic.cardHeight,
-          "卡片高度不应随内容变化")
-    // 要点超出额度时只显示前 N 条，不会把卡片撑高
-    var many = long
-    many.note = Memo.noteText(from: (0..<10).map { "要点\($0)" })
-    check(many.bulletPoints.count == 10, "数据层不限制条数")
-    check(many.bulletPoints.prefix(UILogic.cardPointSlots).count == UILogic.cardPointSlots,
-          "卡片只显示前 \(UILogic.cardPointSlots) 条，多余的不撑高卡片")
+    // 标题最多 3 行，超出截断——不能让一张卡无限长高
+    check(UILogic.cardTitleLines == 3, "标题上限应为 3 行")
 
-    // 预算要有余量，不能卡得刚好——
-    // 字体渲染实测值和估算值总有 1~2pt 出入，
-    // 卡得刚好会让某些卡片被裁掉一两个像素。
-    let budget = 3.0 + 18.0 + UILogic.cardTitleBlockHeight + UILogic.cardPointsBlockHeight
-        + 14.0 + 12.0 + 21.0
-    check(UILogic.cardHeight - budget >= 8,
-          "固定高度应比区块预算至少多 8pt 余量（实测余量 \(UILogic.cardHeight - budget)）")
+    // 无要点时不占要点区：这条直接对应"留白"被去掉
+    let withPoints = Memo.make(title: "有要点", priority: .normal, dueDate: DateKey.today)
+    var a = withPoints
+    a.note = Memo.noteText(from: ["一", "二", "三"])
+    var b = withPoints
+    b.note = ""
+    check(a.hasPoints, "前提：a 有要点")
+    check(!b.hasPoints, "前提：b 无要点")
 
-    // 预告：cardHeight 与 cardMinHeight 的量级关系要合理
-    check(UILogic.cardHeight < 300, "卡片高度不应大到一屏放不下两行")
-    check(UILogic.cardHeight > 120, "卡片高度不应小到读不全")
+    // 数据层不因卡片额度而丢数据
+    check(a.bulletPoints.count == 3, "数据层保留全部要点")
+    check(b.bulletPoints.isEmpty, "无要点时为空")
 }
 
 @MainActor

@@ -151,7 +151,14 @@ final class PanelController {
 
         // 作废在途的折叠收尾：如果上一轮 hide() 还有排队的 orderOut，
         // 它会在展开过程中把窗口藏掉。
+        //
+        // 递增代数的同时必须把 isHiding 复位——
+        // 那个排队的收尾任务里有 `guard foldGeneration == generation else { return }`，
+        // 代数一变它就 return，永远不会执行到 `isHiding = false`。
+        // 于是 isHiding 永久停在 true，下面 `if panel.isVisible, !isHiding`
+        // 这一关再也过不去，面板就彻底展不开了（球还在，点了没反应）。
         foldGeneration &+= 1
+        isHiding = false
 
         // 已经展开着就只把它提到前面，不要重播展开动画。
         //
@@ -270,6 +277,11 @@ final class PanelController {
         // anchorPoint / position 重置回默认值，锚点 0.4 秒内就失效。
         let container = AnimContainerView(frame: NSRect(x: 0, y: 0, width: 600, height: 660))
         container.wantsLayer = true
+        // wantsLayer 之后 layer 是**异步**创建的，当帧可能还是 nil。
+        // prepareUnfoldStartState / playUnfoldNow 都以 `guard let layer` 开头，
+        // layer 为 nil 时它们静默返回——opacity 停在 0，面板就一直是透明的
+        //（球在、点得到，但看不见）。displayIfNeeded 把图层逼出来。
+        container.displayIfNeeded()
         container.autoresizingMask = [.width, .height]
         hosting.frame = container.bounds
         hosting.autoresizingMask = [.width, .height]
@@ -716,6 +728,8 @@ final class PanelController {
     /// 必须在 `orderFront` **之前**调用。否则窗口会先用上一轮遗留的
     /// 图层状态合成一帧——满尺寸或残留透明度，那一帧就是"一闪"。
     private func prepareUnfoldStartState() {
+        // layer 拿不到就别设起始态：宁可没有展开动画，
+        // 也不能让面板停在 opacity 0 上——那是"打不开"。
         guard let panel, let container = animContainer, let layer = container.layer else { return }
 
         let orbFrame = FloatingOrb.shared.isEnabled ? FloatingOrb.shared.currentFrame : nil
@@ -738,7 +752,13 @@ final class PanelController {
 
     /// 起播展开动画。调用时窗口必须已经显示。
     private func playUnfoldNow() {
-        guard let panel, let container = animContainer, let layer = container.layer else { return }
+        // 拿不到图层时走兜底：直接让容器满不透明。
+        // 没有动画总比看不见强。
+        guard let panel, let container = animContainer, let layer = container.layer else {
+            animContainer?.alphaValue = 1
+            isRevealing = false
+            return
+        }
         _ = panel
 
         FrameProbe.shared.start("展开")
