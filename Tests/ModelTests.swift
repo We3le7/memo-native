@@ -987,10 +987,16 @@ func testCardGrid() {
     let w = UILogic.cardWidth(available: available, columns: columns, spacing: spacing)
 
     check(w > 0, "卡片宽度应为正")
-    // 一行至少能放 10 个汉字（13.5pt 字号约 13.5pt/字）
-    check(w / 13.5 >= 10, "卡片一行应能放下至少 10 个汉字，实测 \(String(format: "%.0f", w/13.5))")
-    // 也不能宽到一屏只放一张半
-    check(w <= available / 2, "卡片不应超过可用宽度的一半")
+
+    // 两列是为了放下「日期 + 工期 + 优先级」这一整行元信息。
+    // 三列时每张只有 184pt，日期会被挤到换行。
+    check(columns == 2, "应为两列，才能容纳完整元信息")
+    check(w > 200, "两列时每张应宽于 200pt，实测 \(String(format: "%.0f", w))")
+
+    // 一行至少能放 10 个汉字（12.5pt 字号约 12.5pt/字）
+    check(w / 12.5 >= 10, "卡片一行应能放下至少 10 个汉字，实测 \(String(format: "%.0f", w/12.5))")
+    // 也不能宽到一屏只放一张
+    check(w < available, "单张不应占满整个宽度")
 
     // 总宽不溢出
     let total = w * Double(columns) + spacing * Double(columns - 1)
@@ -1017,7 +1023,8 @@ func testCardGrid() {
     // 列数越多，单张越窄（单调性）
     let w2 = UILogic.cardWidth(available: available, columns: 2, spacing: spacing)
     let w4 = UILogic.cardWidth(available: available, columns: 4, spacing: spacing)
-    check(w2 > w && w > w4, "列数增加时单张应更窄")
+    check(w2 > w4, "列数增加时单张应更窄")
+    check(abs(w2 - w) < 0.01, "两列宽度应与实际取用的一致")
 }
 
 @MainActor

@@ -598,9 +598,11 @@ struct ContentView: View {
                     ),
                     spacing: spacing
                 ) {
-                    ForEach(visibleItems) { item in
+                    ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
                         MemoCard(
                             item: item,
+                            isEditing: ui.editingID == item.id,
+                            editingText: $ui.editingText,
                             onToggle: {
                                 withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
                                     store.toggleDone(item.id)
@@ -615,18 +617,23 @@ struct ContentView: View {
                                 }
                             },
                             onBeginEdit: {
-                                // 卡片不内联编辑：卡片里塞输入框会撑破布局。
-                                // 切回列表编辑，比在卡片上硬塞一个窄输入框合理。
-                                withAnimation(Theme.springSnappy) { ui.layout = .list }
+                                // 原地编辑：两列宽约 280pt，放得下输入框。
+                                // （三列时只有 184pt，才需要退回列表编辑。）
                                 ui.editingID = item.id
                                 ui.editingText = item.title
                             },
+                            onCommitEdit: {
+                                store.rename(item.id, to: ui.editingText)
+                                ui.editingID = nil
+                            },
+                            onCancelEdit: { ui.editingID = nil },
                             onSetPriority: { level in
                                 withAnimation(.easeOut(duration: 0.16)) {
                                     store.setPriority(item.id, to: level)
                                 }
                             }
                         )
+                        .modifier(CardFlyIn(index: index, enabled: !reduceMotion))
                         .transition(
                             .asymmetric(
                                 insertion: .opacity.combined(with: .scale(scale: 0.94)),
@@ -1025,7 +1032,11 @@ struct LayoutToggle: View {
                     if reduceMotion {
                         selected = option
                     } else {
-                        withAnimation(Theme.springSnappy) { selected = option }
+                        // 切换整体给一个稍长的时长：卡片要靠 onAppear
+                        // 触发的飞入动画，事务太短会让它来不及起步。
+                        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                            selected = option
+                        }
                     }
                 } label: {
                     Image(systemName: option.icon)
@@ -1055,23 +1066,93 @@ struct LayoutToggle: View {
     }
 }
 
+// MARK: - 卡片飞入
+
+/// 卡片逐个飞入。
+///
+/// 为什么不用 matchedGeometryEffect 让卡片"从列表行的位置长出来"：
+/// 列表是 LazyVStack（带分组 Section），卡片是 LazyVGrid，
+/// 两者的布局容器完全不同，Lazy 容器里的元素在切换瞬间
+/// 未必都已布局，几何匹配会闪、会错位。
+///
+/// 所以改成错位飞入：每张卡从下方 18pt、缩放 0.92 淡入，
+/// 按序号延迟，读起来像"一叠卡片被摊开"。
+/// 这个效果不依赖跨容器的几何信息，稳定且每帧都能跑满。
+private struct CardFlyIn: ViewModifier {
+    let index: Int
+    let enabled: Bool
+
+    @StateObject private var state = FlyState()
+
+    @MainActor
+    final class FlyState: ObservableObject {
+        @Published var landed = false
+    }
+
+    /// 每张比前一张晚这么久。太快会糊成一片，太慢会显得卡。
+    private static let stagger: Double = 0.022
+    /// 最多错开 8 张。再多的话最后几张要等太久，
+    /// 后面的卡与前面的同时落位反而更利落。
+    private static let maxStaggered = 8
+
+    private var delay: Double {
+        guard enabled else { return 0 }
+        return Double(min(index, Self.maxStaggered)) * Self.stagger
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(state.landed ? 1 : 0)
+            .scaleEffect(state.landed ? 1 : 0.92, anchor: .top)
+            .offset(y: state.landed ? 0 : 18)
+            // 用 .task 而不是 .onAppear：
+            //
+            // onAppear 里直接改状态，SwiftUI 可能把它和首帧提交合并，
+            // 于是没有"从 0 到 1"的中间态，卡片直接闪现而不是飞入。
+            // 先 yield 一次，让 landed=false 的那一帧真正渲染出来，
+            // 再启动动画，起止状态就都确立了。
+            .task {
+                guard enabled else {
+                    state.landed = true
+                    return
+                }
+                await Task.yield()
+                withAnimation(
+                    .spring(response: 0.38, dampingFraction: 0.82).delay(delay)
+                ) {
+                    state.landed = true
+                }
+            }
+            // 不在 onDisappear 里重置：LazyVGrid 滚出屏幕会触发它，
+            // 滚回来时卡片会再飞一次，看着像界面在抽动。
+            // 切回列表时整个卡片子树被销毁，@StateObject 自然丢弃，
+            // 下次进来照样从 0 开始——重置这一步本来就是多余的。
+    }
+}
+
 // MARK: - 卡片视图
 
-/// 卡片：四列网格，一屏能看到更多件事。
+/// 卡片：两列网格，比列表多显示日期，支持原地编辑。
 ///
 /// 和 MemoRow 的分工：
-///   · 行 —— 逐条读文字，适合处理
-///   · 卡片 —— 一眼扫全局，适合浏览
-/// 所以卡片弱化日期/工期文字，强化**优先级色块**和**标题**，
-/// 让"哪几件最急"成为第一眼信息。
+///   · 行 —— 逐条读文字，条数多时效率高
+///   · 卡片 —— 一眼看全局，同时保留足够的元信息（日期、工期、优先级）
+///
+/// 两列（约 280pt）而不是三列：三列塞不下日期，
+/// 而日期是"这件事什么时候该做"的核心信息，不该在卡片里缺席。
 struct MemoCard: View {
     let item: Memo
+    let isEditing: Bool
+    @Binding var editingText: String
     let onToggle: () -> Void
     let onDelete: () -> Void
     let onBeginEdit: () -> Void
+    let onCommitEdit: () -> Void
+    let onCancelEdit: () -> Void
     let onSetPriority: (Priority) -> Void
 
     @StateObject private var hover = Hover()
+    @FocusState private var editFocused: Bool
 
     @MainActor
     final class Hover: ObservableObject {
@@ -1082,26 +1163,44 @@ struct MemoCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // 顶部色带：卡片的"情绪值"。
-            // 不用整张卡着色——那会让四张卡糊成一片；
+            // 不用整张卡着色——那会让并排的卡糊成一片；
             // 一条 3pt 的顶边足够区分，又不干扰读标题。
             Rectangle()
                 .fill(item.done ? Theme.inkQuaternary.opacity(0.5) : item.priority.tint)
                 .frame(height: 3)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
+                // ── 第一行：标题 + 勾选 ──
                 HStack(alignment: .top, spacing: 6) {
-                    Text(item.title)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .strikethrough(item.done, color: Color.secondary.opacity(0.55))
-                        .foregroundStyle(item.done ? Theme.inkTertiary : Theme.ink)
-                        .lineLimit(3)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                        .onTapGesture(count: 2, perform: onBeginEdit)
+                    if isEditing {
+                        TextField("", text: $editingText)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .focused($editFocused)
+                            .onSubmit(onCommitEdit)
+                            .onExitCommand(perform: onCancelEdit)
+                            .onAppear { editFocused = true }
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .fill(Theme.surfaceHover)
+                            )
+                    } else {
+                        Text(item.title)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .strikethrough(item.done, color: Color.secondary.opacity(0.55))
+                            .foregroundStyle(item.done ? Theme.inkTertiary : Theme.ink)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                            // 单击即编辑：卡片面积大，双击反而多余；
+                            // 列表用双击是因为行很窄，单击容易误触。
+                            .onTapGesture(count: 2, perform: onBeginEdit)
+                    }
 
-                    // 勾选：小圆点，和列表里的勾选圈同一套语言
                     Button(action: onToggle) {
                         ZStack {
                             Circle()
@@ -1129,26 +1228,33 @@ struct MemoCard: View {
                     .help(item.done ? "标记为未完成" : "标记为已完成")
                 }
 
-                Spacer(minLength: 0)
+                Spacer(minLength: 2)
 
-                // 底部元信息：优先级 + 工期。只留最关键的两个。
-                HStack(spacing: 5) {
-                    Text(item.priority.label)
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(item.done ? Theme.inkTertiary : item.priority.tint)
+                // ── 第二行：日期 + 工期 ──
+                //
+                // 日期是卡片相对列表多出来的信息，用图标领起，
+                // 逾期时整段转为警示色——扫视时最先看到的就是它。
+                HStack(spacing: 4) {
+                    Image(systemName: item.dueLabel.isOverdue ? "exclamationmark.circle.fill" : "calendar")
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundStyle(dueTint)
+
+                    Text(item.dueLabel.text)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(dueTint)
 
                     if item.isMultiDay {
                         Text("·")
                             .font(.system(size: 9))
                             .foregroundStyle(Theme.inkQuaternary)
                         Text("\(item.spanDays) 天")
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.system(size: 9.5, weight: .medium))
                             .foregroundStyle(Theme.inkTertiary)
                     }
 
-                    Spacer(minLength: 0)
+                    Spacer(minLength: 4)
 
-                    if hover.hovering {
+                    if hover.hovering && !isEditing {
                         Button(action: onDelete) {
                             Image(systemName: "trash")
                                 .font(.system(size: 9, weight: .medium))
@@ -1161,14 +1267,23 @@ struct MemoCard: View {
                         .transition(.opacity)
                     }
                 }
+
+                // ── 第三行：优先级 ──
+                HStack(spacing: 3) {
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(item.done ? Theme.inkQuaternary : item.priority.tint)
+                        .frame(width: 3, height: 8)
+                    Text(item.priority.label)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(item.done ? Theme.inkTertiary : item.priority.tint)
+                }
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
         }
         // 不写死高度：标题最多三行，1 行与 3 行相差 34pt。
-        // 固定 84pt 会把第三行截掉（实测 3 行需要 87.6pt）。
         // 网格里同一行的卡片会被 LazyVGrid 拉齐到最高者，
-        // 所以视觉上仍然是整齐的一排，不会参差。
+        // 所以视觉上仍然整齐，不会参差。
         .frame(minHeight: UILogic.cardMinHeight, alignment: .top)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -1179,8 +1294,9 @@ struct MemoCard: View {
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(
-                    hover.hovering ? Theme.strokeStrong : Theme.stroke,
-                    lineWidth: Theme.hairline
+                    isEditing ? Theme.inkQuaternary
+                              : (hover.hovering ? Theme.strokeStrong : Theme.stroke),
+                    lineWidth: isEditing ? 1 : Theme.hairline
                 )
         )
         .opacity(item.done ? 0.62 : 1)
@@ -1200,8 +1316,15 @@ struct MemoCard: View {
             Button("删除", role: .destructive, action: onDelete)
         }
     }
-}
 
+    /// 日期颜色：逾期用警示红，今天用强调色，其余中性。
+    private var dueTint: Color {
+        if item.done { return Theme.inkTertiary }
+        if item.dueLabel.isOverdue { return Priority.urgent.tint }
+        if item.dueLabel.isToday { return Theme.accent }
+        return Theme.inkTertiary
+    }
+}
 struct MemoRow: View {
     let item: Memo
     let isEditing: Bool
