@@ -695,3 +695,15 @@ extension UILogic {
         }
     }
 }
+
+// MARK: - 输入框图标
+
+extension UILogic {
+    /// 图标三档在不同外观下的灰度值。
+    /// 和 Theme.iconIdle / iconHover / iconActive 一一对应。
+    static let iconInks: [(state: String, dark: Double, light: Double)] = [
+        ("静止", 0.34, 0.52),
+        ("悬停", 0.52, 0.34),
+        ("聚焦", 0.72, 0.16),
+    ]
+}

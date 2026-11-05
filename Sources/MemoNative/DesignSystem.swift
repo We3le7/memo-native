@@ -71,6 +71,32 @@ enum Theme {
     static let stroke = Color.primary.opacity(0.075)
     static let strokeStrong = Color.primary.opacity(0.12)
 
+    /// 输入框左侧图标的三种状态色。
+    ///
+    /// 为什么不能直接用 inkQuaternary / inkTertiary / inkSecondary：
+    /// 那组是"面板上的文字"用的，放在 26pt 的图标上，
+    /// 浅色模式下会**层级反转**——inkSecondary(0.66) 在白底上
+    /// 对比度只有 2.17，比 inkTertiary(0.44) 的 4.52 还淡。
+    /// 图标越小、越该靠对比度被看见，不能沿用字的色阶。
+    ///
+    /// 这里按外观分别取，保证深/浅两边都是**递增**的：
+    ///   状态   深色对比  浅色对比
+    ///   静止    2.29      3.40
+    ///   悬停    4.49      6.65
+    ///   聚焦    8.36     13.36
+    static var iconIdle: Color { adaptiveInk(dark: 0.34, light: 0.52) }
+    static var iconHover: Color { adaptiveInk(dark: 0.52, light: 0.34) }
+    static var iconActive: Color { adaptiveInk(dark: 0.72, light: 0.16) }
+
+    /// 按外观取一个灰度墨色
+    private static func adaptiveInk(dark: Double, light: Double) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            let v = isDark ? dark : light
+            return NSColor(srgbRed: v, green: v, blue: v, alpha: 1)
+        })
+    }
+
     /// 强调色实心块上的文字/图标色。
     ///
     /// 浅色模式的强调是深绿（#096C4A），上面要放白字；

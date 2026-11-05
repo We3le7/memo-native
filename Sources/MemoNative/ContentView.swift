@@ -203,6 +203,22 @@ struct ContentView: View {
     @ObservedObject var settings: AppSettings
     @StateObject private var ui = ComposerState()
     @FocusState private var inputFocused: Bool
+    /// 上一次的字数，用来判断是"输入"还是"删除"。
+    /// 只是记个数字，不需要触发重绘，所以不是 @Published。
+    @StateObject private var lengthBox = LengthBox()
+    @StateObject private var inputHover = HoverFlag()
+    /// 提交瞬间的脉冲：让"写完了"这件事有一个物理落点。
+    ///
+    /// 没有它的话，按回车后文字消失、列表多一行，
+    /// 两个变化同时发生，眼睛抓不住"刚刚发生了什么"。
+    /// 先缩一下再弹回，等于给这次操作画了个句号。
+    @StateObject private var submitPulse = HoverFlag()
+    /// 打字脉冲：每敲入一个字，图标轻轻跳一下。
+    ///
+    /// 这是"闪亮"的实质——不是颜色更艳，而是有生命感。
+    /// 幅度必须极小（1.06 倍、0.1s），否则就成了干扰：
+    /// 用户注意力该在字上，图标只是余光里的呼吸。
+    @StateObject private var typePulse = HoverFlag()
     @FocusState private var pointFocused: Bool
     @StateObject private var writeBtn = PressState()
 
@@ -425,6 +441,29 @@ struct ContentView: View {
 
     // MARK: 输入区
 
+    /// 输入框左侧图标的颜色。
+    ///
+    /// 只在主题的墨色阶里走，不引入新色相——
+    /// 输入框里唯一该有颜色的是用户打的字。
+    /// "闪亮"靠明度与那圈 6~10% 的强调色微光，不靠换个颜色。
+    /// 图标的缩放。
+    ///
+    /// 三层叠加，顺序有意义：
+    ///   底座  —— 静止略小(0.97)、悬停略大(1.02)，暗示"可以点/可以去"
+    ///   聚焦  —— 回到 1.0
+    ///   打字脉冲 —— 在此基础上再跳 1.08
+    /// 乘法叠加，所以每一层都在前一层的基础上生效。
+    private var iconScale: CGFloat {
+        var scale: CGFloat = inputFocused ? 1.0 : (inputHover.on ? 1.02 : 0.97)
+        if typePulse.on { scale *= 1.08 }
+        return scale
+    }
+
+    private var iconTint: Color {
+        if inputFocused { return Theme.iconActive }
+        return inputHover.on ? Theme.iconHover : Theme.iconIdle
+    }
+
     private var composer: some View {
         VStack(spacing: 10) {
             // 输入框：本界面的视觉重心。
@@ -439,28 +478,80 @@ struct ContentView: View {
             //   · 文字独占中间，两侧只放最必要的
             //   · 回车提示改成独立胶囊，像真的键帽；只在有内容时才亮
             HStack(spacing: 10) {
-                // 图标只用文字色阶，不加色块。
-                // 输入框里唯一的"颜色"就是用户打的字，其余都该退到背后。
-                Image(systemName: "pencil.line")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(inputFocused ? Theme.inkSecondary : Theme.inkQuaternary)
-                    .frame(width: 17, height: 19)
-                    // 聚焦时轻轻弹一下，给出"可以打字了"的即时反馈
-                    .scaleEffect(inputFocused ? 1.0 : 0.94)
-                    .animation(Theme.confirm, value: inputFocused)
+                // 图标：放大、并给一点"亮"的感觉。
+                //
+                // 但"亮"不能靠加一个新颜色——输入框里唯一的颜色
+                // 该是用户打的字。它是一个中性的书写入口，
+                // 突然出现一个绿色/蓝色图标会立刻突兀。
+                //
+                // 做法是在**主题色阶内部**做文章：
+                //   静止  inkQuaternary(0.24)  很淡，但形状够大看得见
+                //   悬停  inkTertiary(0.44)    告知"这里有焦点可去"
+                //   聚焦  inkSecondary(0.66) + 一圈极淡的发光底
+                //
+                // 那个"发光"是 accent 色 6% 的实心圆，不是 shadow——
+                // 界面里所有浮层都不带阴影，输入框也不破例。
+                // 6% 的强调绿在深色模式下几乎不可见，在浅色下
+                // 是一层温热的光，刚好够"闪亮"而不抢戏。
+                ZStack {
+                    Circle()
+                        .fill(Theme.accent.opacity(inputFocused ? 0.10 : (inputHover.on ? 0.05 : 0)))
+                        .frame(width: 26, height: 26)
+                        .blur(radius: inputFocused ? 3 : 0)
+
+                    Image(systemName: "pencil.line")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(iconTint)
+                        .symbolRenderingMode(.hierarchical)
+                }
+                .frame(width: 22, height: 22)
+                // 聚焦时轻轻放大一点，像被"点亮"
+                .scaleEffect(iconScale)
+                .animation(Theme.confirm, value: inputFocused)
+                .animation(Theme.hover, value: inputHover.on)
+                // 打字脉冲用更短的曲线：0.1s 的跳动必须立刻收回，
+                // 用 confirm(0.42s) 会拖成一串慢动作。
+                .animation(Theme.hover, value: typePulse.on)
+                .onHover { inside in
+                    withAnimation(Theme.hover) { inputHover.on = inside }
+                }
 
                 TextField("记点什么…", text: $ui.draft)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14.5, weight: .regular))
                     .focused($inputFocused)
                     .onSubmit(commit)
+                    .onChange(of: ui.draft) { newValue in
+                        // 只在变长时跳。删除给同样的正反馈很怪——
+                        // 退格不该有奖励感。
+                        let grew = newValue.count > lengthBox.value
+                        lengthBox.value = newValue.count
+                        guard grew, inputFocused, !reduceMotion else { return }
+                        typePulse.on = true
+                        // 用代数作废旧任务。
+                        //
+                        // 直接 asyncAfter 0.1s 把 on 设回 false 有个坑：
+                        // 连着打字时每个字符都排一个"取消"任务，
+                        // 而先排的那个会在**新字符触发扭动之前**把状态清掉，
+                        // 于是快速打字时脉冲根本不动——越流畅越没效果。
+                        //
+                        // 每次跳动换一个代数，只认最新那个的收尾。
+                        lengthBox.pulseGeneration &+= 1
+                        let gen = lengthBox.pulseGeneration
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            guard lengthBox.pulseGeneration == gen else { return }
+                            typePulse.on = false
+                        }
+                    }
 
                 if !ui.draft.isEmpty {
                     Button {
-                        withAnimation(Theme.hover) { ui.draft = "" }
+                        // 清空整框给一个明确的退场动画：
+                        // 文字瞬间消失会让人不确定"是清空了还是没打成"。
+                        withAnimation(Theme.move) { ui.draft = "" }
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: 9.5, weight: .bold))
                             .foregroundStyle(Theme.inkTertiary)
                             .frame(width: 17, height: 17)
                             .background(Circle().fill(Theme.surfaceHover))
@@ -547,24 +638,61 @@ struct ContentView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 11)
+            // 聚焦时整框极轻微地"提起来"。
+            //
+            // 1pt 的上移 + 0.4% 放大，几乎看不出来，但配合底色抬起，
+            // 会让人觉得这个框离眼睛近了一点——这就是"被唤起"的感觉。
+            // 再大就会显得轻浮，输入框不该在眼前跳。
+            //
+            // 用 move（较慢）而不是 tap（很快）：
+            // 位置变化比颜色变化需要更多时间才显得自然，
+            // 颜色该立刻响应，位移慢半拍才有重量。
+            .offset(y: inputFocused ? -1 : 0)
+            .scaleEffect(inputFocused ? 1.004 : 1, anchor: .center)
+            .animation(Theme.move, value: inputFocused)
+            // 提交脉冲：轻微收缩。这里用 confirm（带回弹）而不是
+            // 平缓曲线——收回去的过程本身就该有一点弹性，
+            // 像把东西按进抽屉。
+            .scaleEffect(submitPulse.on ? 0.985 : 1)
+            .animation(Theme.confirm, value: submitPulse.on)
             .background(
+                // 聚焦时底色抬起：这是"这个框现在活了"最主要的一层。
+                //
+                // 不用阴影。界面里所有浮层都不带阴影，
+                // 输入框深陷在面板里，投影会立刻暴露它是个"贴上去的块"。
+                // 用明度差表达层次更干净——深色模式下抬到
+                // surfaceRaised 已经足够分辨。
                 RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
                     .fill(inputFocused ? Theme.surfaceRaised : Theme.surface)
             )
             .overlay(
-                // 聚焦靠"描边加深 + 底色抬起"，不靠染色。
-                // 输入框里唯一该有颜色的是文字本身。
+                // 描边：聚焦时加深并加宽一点点
                 RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
                     .strokeBorder(
                         inputFocused ? Theme.inkQuaternary : Theme.stroke,
                         lineWidth: inputFocused ? 1.0 : Theme.hairline
                     )
             )
-            .shadow(
-                color: .black.opacity(inputFocused ? 0.07 : 0.05),
-                radius: inputFocused ? 8 : 4,
-                y: inputFocused ? 2 : 1
-            )
+            .overlay(alignment: .top) {
+                // 顶部一道 1px 高光：像光从上方打在框沿上。
+                //
+                // 这一笔很轻（7% 墨色），但正是它让框看起来"鼓起来"了，
+                // 比阴影省事也干净。聚焦时更亮一些。
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Theme.ink.opacity(inputFocused ? 0.10 : 0.055),
+                                .clear
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(height: 1)
+                    .padding(.horizontal, Theme.radius)
+                    .opacity(inputFocused ? 1 : 0.6)
+            }
             .animation(Theme.tap, value: inputFocused)
             .animation(Theme.hover, value: ui.draft.isEmpty)
 
@@ -575,7 +703,9 @@ struct ContentView: View {
             // 常驻也不会把输入区顶高，没有折叠的必要了。
             VStack(alignment: .leading, spacing: 5) {
                 // 已加的要点：每条右侧一个删除键（悬停才显形）
-                ForEach(Array(ui.draftPoints.enumerated()), id: \.offset) { index, point in
+                ForEach(Array(zip(UILogic.bulletIdentities(ui.draftPoints), ui.draftPoints.enumerated())),
+                        id: \.0) { _, pair in
+                    let (index, point) = pair
                     DraftPointRow(
                         text: point,
                         onChange: { newText in
@@ -1052,6 +1182,12 @@ struct ContentView: View {
             ui.resetPoints()
             // 工期不重置：连续录入同类事项时，通常还是同样的工期
         }
+        // 缩一下再弹回。0.09s 足够被感知，又不会拖慢连续录入。
+        submitPulse.on = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) {
+            submitPulse.on = false
+        }
+
         ui.flash(pointCount == 0 ? "已记录" : "已记录，含 \(pointCount) 条要点")
     }
 
@@ -1491,6 +1627,13 @@ struct PointIconButton: View {
 /// 一个可发布的 Bool。工具链没有 @State 宏，只能用 ObservableObject 兜。
 final class InputModeFlag: ObservableObject {
     @Published var on = false
+}
+
+/// 只用来在多次 onChange 之间记一个数字，不需要触发重绘。
+final class LengthBox: ObservableObject {
+    var value = 0
+    /// 每次打字脉冲递增，用来作废上一轮的"取消"任务
+    var pulseGeneration = 0
 }
 
 struct PointsEditor: View {

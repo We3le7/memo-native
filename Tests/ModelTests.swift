@@ -45,6 +45,7 @@ testSpan()
     testCardBaselineHeight()
     testBulletStableIdentity()
     testPointsInputVisibility()
+    testInputIconContrast()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -1745,6 +1746,61 @@ func testPointsInputVisibility() {
     check(shows(["甲"], wants: false, draft: ""), "有要点即可展开")
     check(shows([], wants: true, draft: ""), "主动即可展开")
     check(shows([], wants: false, draft: "x"), "有草稿即可展开")
+}
+
+@MainActor
+
+
+/// 输入框图标的对比度必须在两种外观下都**递增**。
+///
+/// 这条不是洁癖：早先直接用 inkQuaternary→Tertiary→Secondary，
+/// 浅色模式下 0.66 在白底上只有 2.17，比 0.44 的 4.52 还淡，
+/// 层级整个反了——聚焦时图标反而更看不清。
+///
+/// 阈值取 2.0：图标是辅助元素，不要求 WCAG 正文级的 4.5，
+/// 但低到 2.0 以下就真的看不见了。
+func testInputIconContrast() {
+    func lum(_ v: Double) -> Double {
+        v <= 0.03928 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)
+    }
+    // 灰度色对面板底的对比度
+    func ratio(_ v: Double, _ bg: Double) -> Double {
+        let a = lum(v), b = lum(bg)
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
+    let darkBG = 0.118   // UILogic.darkPanelBackground
+    let lightBG = 0.96   // UILogic.lightPanelBackground
+
+    let inks = UILogic.iconInks
+    check(inks.count == 3, "应有三档（实际 \(inks.count)）")
+
+    for (state, dark, light) in inks {
+        let d = ratio(dark, darkBG)
+        let l = ratio(light, lightBG)
+        check(d >= 2.0, "深色模式下 \(state) 对比度应 ≥2.0（实测 \(String(format: "%.2f", d))）")
+        check(l >= 2.0, "浅色模式下 \(state) 对比度应 ≥2.0（实测 \(String(format: "%.2f", l))）")
+    }
+
+    // 关键：两种外观下都必须是递增的
+    let darkRatios = inks.map { ratio($0.dark, darkBG) }
+    let lightRatios = inks.map { ratio($0.light, lightBG) }
+    for i in 1..<inks.count {
+        check(darkRatios[i] > darkRatios[i-1],
+              "深色下 \(inks[i].state) 应比 \(inks[i-1].state) 更清楚（\(String(format: "%.2f", darkRatios[i])) vs \(String(format: "%.2f", darkRatios[i-1]))）")
+        check(lightRatios[i] > lightRatios[i-1],
+              "浅色下 \(inks[i].state) 应比 \(inks[i-1].state) 更清楚（\(String(format: "%.2f", lightRatios[i])) vs \(String(format: "%.2f", lightRatios[i-1]))）")
+    }
+
+    // 聚焦态要足够醒目：≥7
+    check(darkRatios[2] >= 7.0, "聚焦态深色应 ≥7（实测 \(String(format: "%.2f", darkRatios[2]))）")
+    check(lightRatios[2] >= 7.0, "聚焦态浅色应 ≥7（实测 \(String(format: "%.2f", lightRatios[2]))）")
+
+    // 验证"直接沿用墨色阶会出错"这个论断仍然成立
+    let wrongSecondary = ratio(0.66, lightBG)
+    let wrongTertiary = ratio(0.44, lightBG)
+    check(wrongSecondary < wrongTertiary,
+          "前提校验：浅色下 0.66 确实比 0.44 淡（\(String(format: "%.2f", wrongSecondary)) < \(String(format: "%.2f", wrongTertiary))）")
 }
 
 @MainActor
