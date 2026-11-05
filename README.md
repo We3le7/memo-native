@@ -22,7 +22,8 @@
 git clone --depth 1 https://github.com/We3le7/memo-native.git ~/memo-native && cd ~/memo-native && ./scripts/build.sh && ./scripts/install.sh && open -a MemoNative
 ```
 
-约 45 秒。装完自动启动，按 `⌥Space` 就能用。
+约 1 分钟（几乎全是编译；有模块缓存后增量构建约 15 秒）。装完自动启动，
+按 `⌥Space` 就能用。
 
 **只需要 Command Line Tools**，不用 Xcode：
 
