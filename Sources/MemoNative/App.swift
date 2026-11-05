@@ -26,6 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)  // 显示 Dock 图标（图标在这里可见）
 
+        installMainMenu()
+
         UNUserNotificationCenter.current().delegate = self
         ReminderCenter.shared.requestAuthorization()
         ReminderCenter.shared.reschedule()
@@ -177,6 +179,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         } else {
             PanelController.shared.toggle()
         }
+    }
+
+    /// 装一个最小可用的主菜单。
+    ///
+    /// **这不是装饰，是 ⌘C / ⌘V 能用的前提。**
+    ///
+    /// macOS 的编辑快捷键不是键位直接绑到控件上的，而是走菜单：
+    /// 用户按 ⌘V → 菜单系统找 Edit 菜单里 keyEquivalent 为 "v" 的项
+    /// → 沿响应链把 copy:/paste: 发给当前第一响应者。
+    /// 没有这个菜单项，这条链根本不存在，
+    /// 于是输入框里 ⌘C / ⌘V / ⌘A / ⌘Z 全部无效——
+    /// 用户只能右键选"粘贴"，而那个菜单又是另一个藏得很深的地方。
+    ///
+    /// 之前没有 mainMenu，所以粘贴是坏的。
+    private func installMainMenu() {
+        let mainMenu = NSMenu()
+
+        // 应用菜单：必须有，否则第一个子菜单会被系统当成应用菜单，
+        // 而且"关于/隐藏/退出"这些标准项也指望它。
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(
+            withTitle: "关于备忘录",
+            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+            keyEquivalent: ""
+        )
+        appMenu.addItem(.separator())
+        appMenu.addItem(
+            withTitle: "隐藏备忘录",
+            action: #selector(NSApplication.hide(_:)),
+            keyEquivalent: "h"
+        )
+        appMenu.addItem(.separator())
+        appMenu.addItem(
+            withTitle: "退出备忘录",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        appItem.submenu = appMenu
+        mainMenu.addItem(appItem)
+
+        // 编辑菜单：⌘C/⌘V 的依托。
+        //
+        // target 留 nil，让命令沿响应链找——这样它会发给
+        // 当前正在编辑的那个 TextField，而不是被 App 层截走。
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(
+            withTitle: "粘贴并匹配样式",
+            action: #selector(NSTextView.pasteAsPlainText(_:)),
+            keyEquivalent: "v"
+        ).keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+
+        NSApp.mainMenu = mainMenu
     }
 
     private func showMenu() {

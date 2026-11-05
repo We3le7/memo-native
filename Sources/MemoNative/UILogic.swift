@@ -671,3 +671,27 @@ extension UILogic {
         return "\(relative) · \(absolute)"
     }
 }
+
+// MARK: - 要点行的稳定标识
+
+extension UILogic {
+    /// 给要点列表生成**稳定**的行 ID。
+    ///
+    /// 早先直接用下标当 id（`id: \.offset`）。下标不是标识，
+    /// 它是位置：删掉第 1 条，原来的第 2 条会"变成"第 1 条。
+    /// SwiftUI 看到的是"所有行都换了内容"，
+    /// 于是整段重排而不是只消失一行——动画看起来就是一顿。
+    ///
+    /// 现在把内容和出现次序一起编成 ID：
+    ///   · 内容不同 → ID 不同，增删只影响那一条
+    ///   · 两条一样的内容靠序号区分，不会撞 ID
+    ///   · 改文字会换 ID（那一行重画），但改文字本来就不该有位移
+    static func bulletIdentities(_ points: [String]) -> [String] {
+        var seen: [String: Int] = [:]
+        return points.map { text in
+            let n = (seen[text] ?? 0) + 1
+            seen[text] = n
+            return "\(text)#\(n)"
+        }
+    }
+}

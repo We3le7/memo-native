@@ -43,6 +43,8 @@ testSpan()
     testDateLineWithWeekday()
     testSpanEditableForSingleDay()
     testCardBaselineHeight()
+    testBulletStableIdentity()
+    testPointsInputVisibility()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -1669,6 +1671,80 @@ func testCardBaselineHeight() {
     // 数据层不因卡片额度而丢数据
     check(a.bulletPoints.count == 3, "数据层保留全部要点")
     check(b.bulletPoints.isEmpty, "无要点时为空")
+}
+
+@MainActor
+
+
+/// 要点行的 ID 必须稳定，否则动画会整段重排。
+///
+/// 用下标当 ID 时删掉中间一条，后面的行会"变成"前一行，
+/// SwiftUI 看到的是所有行都换了内容，于是整段重排而不是
+/// 只消失一行——动画看起来就是一顿。
+func testBulletStableIdentity() {
+    let a = UILogic.bulletIdentities(["甲", "乙", "丙"])
+    check(a.count == 3, "应生成 3 个 ID")
+    check(Set(a).count == 3, "ID 不应重复")
+
+    // 删掉中间一条：剩下两条的 ID 必须和原来一致
+    let afterRemove = UILogic.bulletIdentities(["甲", "丙"])
+    check(afterRemove[0] == a[0], "删中间条后，第一条 ID 不应变（\(afterRemove[0]) vs \(a[0])）")
+    check(afterRemove[1] == a[2], "删中间条后，原第三条 ID 不应变（\(afterRemove[1]) vs \(a[2])）")
+
+    // 插入到开头：原有的 ID 都不能变
+    let afterInsert = UILogic.bulletIdentities(["新", "甲", "乙", "丙"])
+    check(afterInsert[1] == a[0], "插入开头后，原第一条 ID 不应变")
+    check(afterInsert[3] == a[2], "插入开头后，原第三条 ID 不应变")
+
+    // 内容相同也能区分
+    let dup = UILogic.bulletIdentities(["同", "同"])
+    check(dup.count == 2, "两条相同内容应生成两个 ID")
+    check(dup[0] != dup[1], "相同内容的两条 ID 必须不同，否则 ForEach 会撞（\(dup)）")
+
+    // 三条相同也不撞
+    let tri = UILogic.bulletIdentities(["x", "x", "x"])
+    check(Set(tri).count == 3, "三条相同内容应有 3 个不同 ID")
+
+    // 空列表
+    check(UILogic.bulletIdentities([]).isEmpty, "空列表应返回空")
+
+    // 改文字会换 ID —— 这是预期行为，改文字不该有位移
+    let changed = UILogic.bulletIdentities(["甲改", "乙", "丙"])
+    check(changed[0] != a[0], "改文字应换 ID（那一行重画，不产生位移）")
+}
+
+/// 没有要点时不要默认撑出一个空输入框。
+///
+/// 那个空框会让人以为"这里必须填点什么"，
+/// 而要点本来是可选的分点补充。
+/// 但一旦开始输入就必须保持展开——否则打字打到一半框会消失。
+func testPointsInputVisibility() {
+    // 复现 PointsEditor 里 showsInput 的判定
+    func shows(_ points: [String], wants: Bool, draft: String) -> Bool {
+        !points.isEmpty || wants || !draft.isEmpty
+    }
+
+    // 全新、空、没主动要：收起
+    check(!shows([], wants: false, draft: ""), "空要点且未主动展开时应收起")
+
+    // 主动点了"加一条要点"：展开
+    check(shows([], wants: true, draft: ""), "主动展开后应显示输入行")
+
+    // 已经开始输入：必须保持展开
+    check(shows([], wants: false, draft: "写了半句"), "有草稿时必须保持展开")
+
+    // 已有要点：始终展开（继续添加）
+    check(shows(["甲"], wants: false, draft: ""), "已有要点时应显示输入行")
+
+    // 三条满了：仍然是"有要点"，输入行显示但加号禁用
+    let full = ["甲", "乙", "丙"]
+    check(shows(full, wants: false, draft: ""), "满额时输入行仍显示（加号禁用）")
+    check(!UILogic.canAddBullet(full), "满额时不能再加")
+
+    // 三种展开条件互不依赖
+    check(shows(["甲"], wants: false, draft: ""), "有要点即可展开")
+    check(shows([], wants: true, draft: ""), "主动即可展开")
+    check(shows([], wants: false, draft: "x"), "有草稿即可展开")
 }
 
 @MainActor

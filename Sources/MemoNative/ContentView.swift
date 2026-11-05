@@ -38,9 +38,18 @@ final class ComposerState: ObservableObject {
     @discardableResult
     func appendEditingPoint() -> Bool {
         let before = editingPoints.count
-        editingPoints = UILogic.appendingBullet(editingPoints, editingPointDraft)
-        guard editingPoints.count > before else { return false }
-        editingPointDraft = ""
+        // 必须包在 withAnimation 里：
+        // 不包的话 ForEach 的增删没有事务，行是"啪"地出现/消失，
+        // 上面那条 .transition 等于白写。
+        var added = false
+        withAnimation(Theme.rowInsert) {
+            editingPoints = UILogic.appendingBullet(editingPoints, editingPointDraft)
+            added = editingPoints.count > before
+        }
+        guard added else { return false }
+        // 清空草稿用更快的曲线：它只是一行文字的消失，
+        // 跟着入场动画一起慢慢淡掉会显得拖沓。
+        withAnimation(Theme.hover) { editingPointDraft = "" }
         return true
     }
 
@@ -134,9 +143,13 @@ final class ComposerState: ObservableObject {
     @discardableResult
     func appendPoint() -> Bool {
         let before = draftPoints.count
-        draftPoints = UILogic.appendingBullet(draftPoints, pointDraft)
-        guard draftPoints.count > before else { return false }
-        pointDraft = ""
+        var added = false
+        withAnimation(Theme.rowInsert) {
+            draftPoints = UILogic.appendingBullet(draftPoints, pointDraft)
+            added = draftPoints.count > before
+        }
+        guard added else { return false }
+        withAnimation(Theme.hover) { pointDraft = "" }
         return true
     }
 
@@ -474,16 +487,29 @@ struct ContentView: View {
                 // 做法是"深色实心 + 反色文字"：在深色和浅色模式下
                 // 都成立，因为墨色本来就是跟随外观翻转的，
                 // 反色文字自然跟着一起翻。
+                // 有内容才展开文字。
+                //
+                // 空输入框时只留一个勾号，宽度收窄——
+                // 没东西可确认的时候，"确认"两个字是纯噪音，
+                // 而且它一直占着位置，让输入框显得拥挤。
+                //
+                // 有内容时文字滑出来，同时按钮变实心：
+                // 一个动作在"可执行"的瞬间变大、变亮，
+                // 是比常驻更清楚的提示。
                 Button(action: commit) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: canWrite ? 4 : 0) {
                         Image(systemName: "checkmark")
                             .font(.system(size: 9, weight: .bold))
-                        Text("确认")
-                            .font(.system(size: 11, weight: .semibold))
+                        if canWrite {
+                            Text("确认")
+                                .font(.system(size: 11, weight: .semibold))
+                                .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .leading)))
+                        }
                     }
                     .foregroundStyle(canWrite ? Theme.panelBackgroundInverted : Theme.inkQuaternary)
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, canWrite ? 10 : 7)
                     .frame(height: 24)
+                    .animation(Theme.confirm, value: canWrite)
                     .background(
                         Capsule().fill(
                             canWrite
@@ -559,7 +585,9 @@ struct ContentView: View {
                         },
                         onDelete: {
                             withAnimation(Theme.tap) {
-                                ui.draftPoints = UILogic.removingBullet(ui.draftPoints, at: index)
+                                withAnimation(Theme.rowRemove) {
+                                    ui.draftPoints = UILogic.removingBullet(ui.draftPoints, at: index)
+                                }
                             }
                         }
                     )
@@ -1460,6 +1488,11 @@ struct PointIconButton: View {
     }
 }
 
+/// 一个可发布的 Bool。工具链没有 @State 宏，只能用 ObservableObject 兜。
+final class InputModeFlag: ObservableObject {
+    @Published var on = false
+}
+
 struct PointsEditor: View {
     @Binding var points: [String]
     @Binding var draft: String
@@ -1472,6 +1505,7 @@ struct PointsEditor: View {
     var onFocusGained: () -> Void = {}
 
     @FocusState private var focused: Bool
+    @StateObject private var hoverPrompt = HoverFlag()
 
     /// 还能不能再加一条
     private var canAdd: Bool { UILogic.canAddBullet(points) }
@@ -1481,9 +1515,32 @@ struct PointsEditor: View {
         canAdd && UILogic.normalizeBullet(draft) != nil
     }
 
+    /// 用户主动要求展开输入行。
+    ///
+    /// 不能直接用 `focused` 控制展开——那是个循环依赖：
+    /// focused 为 true 才渲染 TextField，而 TextField 出现之前
+    /// `.focused($focused)` 无从建立，焦点就丢了。
+    /// 所以用一个独立的状态先把它"展开出来"，
+    /// 渲染完再把焦点送进去。
+    @StateObject private var inputMode = InputModeFlag()
+
+    /// 要不要把输入行展开。
+    ///
+    /// 一条要点都没有时，不默认撑出一个空输入框——
+    /// 那个空框会让人以为"这里必须填点什么"，
+    /// 而要点本来是可选的分点补充。
+    ///
+    /// 收起时只留一行很轻的"加一条要点"，点它才展开。
+    /// 已经开始输入就保持展开，否则打字打到一半框会消失。
+    private var showsInput: Bool {
+        !points.isEmpty || inputMode.on || !draft.isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+            ForEach(Array(zip(UILogic.bulletIdentities(points), points.enumerated())),
+                    id: \.0) { _, pair in
+                let (index, point) = pair
                 HStack(spacing: 6) {
                     Circle()
                         .fill(Theme.inkTertiary)
@@ -1503,14 +1560,29 @@ struct PointsEditor: View {
                     .onTapGesture { onFocusGained() }
 
                     PointIconButton(symbol: "xmark", help: "删除这条要点") {
-                        withAnimation(Theme.tap) {
+                        // 删除用退场曲线，不是 tap——
+                        // 这是一行要消失，不是一个小开关变状态。
+                        withAnimation(Theme.rowRemove) {
                             points = UILogic.removingBullet(points, at: index)
                         }
                     }
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                // 进出场不对称：新的一条从上滑入并展开，
+                // 删掉的那条向左缩走——和列表行删除同一套语言，
+                // 整个界面里"东西没了"都是这个动作。
+                .transition(
+                    .asymmetric(
+                        insertion: .opacity
+                            .combined(with: .move(edge: .top))
+                            .combined(with: .scale(scale: 0.96, anchor: .leading)),
+                        removal: .opacity
+                            .combined(with: .move(edge: .leading))
+                            .combined(with: .scale(scale: 0.92, anchor: .leading))
+                    )
+                )
             }
 
+            if showsInput {
             // 添加行：输入框 + 加号按钮，**回车不添加**。
             //
             // 编辑已有事项时，回车常常只是"输完了、手离开键盘"，
@@ -1556,6 +1628,41 @@ struct PointsEditor: View {
                 }
             }
             .padding(.vertical, 2)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+            } else if canAdd {
+                // 收起态：一行很轻的入口。
+                //
+                // 它不抢视线，但点得到——这是"想加点什么"的起点。
+                Button {
+                    // 先展开，再送焦点。
+                    // 同一帧里既展开又聚焦是不行的：
+                    // TextField 还没被创建，焦点无处可落。
+                    withAnimation(Theme.move) { inputMode.on = true }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+                        focused = true
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 8, weight: .semibold))
+                        Text("加一条要点")
+                            .font(.system(size: 11))
+                    }
+                    .foregroundStyle(Theme.inkQuaternary)
+                    .padding(.leading, 4)
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("添加一条要点（可选）")
+                .onHover { inside in
+                    withAnimation(Theme.hover) {
+                        hoverPrompt.on = inside
+                    }
+                }
+                .foregroundStyle(hoverPrompt.on ? Theme.inkSecondary : Theme.inkQuaternary)
+                .transition(.opacity)
+            }
         }
         .padding(.top, 3)
     }
@@ -1575,6 +1682,7 @@ private struct DraftPointRow: View {
     @StateObject private var hover = HoverFlag()
     @StateObject private var edit = EditState()
     @FocusState private var focused: Bool
+    @StateObject private var hoverPrompt = HoverFlag()
 
     @MainActor
     final class EditState: ObservableObject {
