@@ -702,7 +702,7 @@ struct ContentView: View {
             editingText: $ui.editingText,
             editingPoints: $ui.editingPoints,
             editingPointDraft: $ui.editingPointDraft,
-            onSubmitPoint: { ui.appendEditingPoint() },
+            onAddPoint: { ui.appendEditingPoint() },
             onToggle: {
                 withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
                     store.toggleDone(item.id)
@@ -786,7 +786,7 @@ struct ContentView: View {
             editingText: $ui.editingText,
             editingPoints: $ui.editingPoints,
             editingPointDraft: $ui.editingPointDraft,
-            onSubmitPoint: { ui.appendEditingPoint() },
+            onAddPoint: { ui.appendEditingPoint() },
             onToggle: {
                 withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
                     store.toggleDone(item.id)
@@ -1158,9 +1158,19 @@ struct FilterSegment: View {
 struct PointsEditor: View {
     @Binding var points: [String]
     @Binding var draft: String
-    let onSubmit: () -> Void
+    /// 点加号时添加一条。不叫 onSubmit：它现在已经不是
+    /// 回车触发的了，名字得跟着行为走。
+    let onAdd: () -> Void
 
     @FocusState private var focused: Bool
+
+    /// 还能不能再加一条
+    private var canAdd: Bool { UILogic.canAddBullet(points) }
+
+    /// 能不能提交：还有空位，且输入框里有内容
+    private var canCommit: Bool {
+        canAdd && UILogic.normalizeBullet(draft) != nil
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -1199,18 +1209,64 @@ struct PointsEditor: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
+            // 添加行：输入框 + 加号按钮，**回车不添加**。
+            //
+            // 编辑已有事项时，回车常常只是"输完了、手离开键盘"，
+            // 并不等于"确认新增这一条"。自动添加会让人在
+            // 只想改标题、顺手按了下回车时，凭空多出一条要点。
+            //
+            // 新增是需要明确表达的动作，所以只认那个加号。
             HStack(spacing: 6) {
-                Image(systemName: "plus")
-                    .font(.system(size: 7.5, weight: .bold))
-                    .foregroundStyle(Theme.inkQuaternary)
+                Circle()
+                    .fill(Theme.inkQuaternary)
+                    .frame(width: 3, height: 3)
                     .padding(.leading, 1)
 
-                TextField("加一条要点，回车添加", text: $draft)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11.5))
-                    .focused($focused)
-                    .disabled(!UILogic.canAddBullet(points))
-                    .onSubmit(onSubmit)
+                TextField(
+                    canAdd
+                        ? "加一条要点"
+                        : "已达 \(UILogic.maxBulletPoints) 条上限",
+                    text: $draft
+                )
+                .textFieldStyle(.plain)
+                .font(.system(size: 11.5))
+                .focused($focused)
+                .disabled(!canAdd)
+
+                // 加号按钮：只在输入框有内容时才亮起来。
+                // 空输入时保持暗淡但依然占位，避免输入框宽度跳动。
+                //
+                // 可见尺寸 18pt，可点区域放到 24×24——这一行本身矮，
+                // 按钮是全靠鼠标点的唯一入口，太窄会点不中。
+                Button {
+                    onAdd()
+                    // 加完之后把焦点还给输入框：
+                    // 点按钮会让输入框失焦，不还回去的话
+                    // 想连加第二条还得重新点一下输入框。
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                        focused = true
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(canCommit ? Theme.ink : Theme.inkQuaternary)
+                        .frame(width: 18, height: 18)
+                        .background(
+                            Circle().fill(canCommit ? Theme.selectionFill : Color.clear)
+                        )
+                        .overlay(
+                            Circle().strokeBorder(
+                                canCommit ? Theme.selectionStroke : Theme.stroke,
+                                lineWidth: Theme.hairline
+                            )
+                        )
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canCommit)
+                .help(canAdd ? "添加这条要点" : "已达 \(UILogic.maxBulletPoints) 条上限")
+                .animation(Theme.springSnappy, value: canCommit)
             }
             .padding(.vertical, 2)
         }
@@ -1446,7 +1502,7 @@ struct MemoCard: View {
     @Binding var editingText: String
     @Binding var editingPoints: [String]
     @Binding var editingPointDraft: String
-    let onSubmitPoint: () -> Void
+    let onAddPoint: () -> Void
     let onToggle: () -> Void
     let onDelete: () -> Void
     let onBeginEdit: () -> Void
@@ -1539,7 +1595,7 @@ struct MemoCard: View {
                     PointsEditor(
                         points: $editingPoints,
                         draft: $editingPointDraft,
-                        onSubmit: onSubmitPoint
+                        onAdd: onAddPoint
                     )
                 } else if item.hasPoints {
                     VStack(alignment: .leading, spacing: 2) {
@@ -1660,7 +1716,7 @@ struct MemoRow: View {
     @Binding var editingText: String
     @Binding var editingPoints: [String]
     @Binding var editingPointDraft: String
-    let onSubmitPoint: () -> Void
+    let onAddPoint: () -> Void
     let onToggle: () -> Void
     let onDelete: () -> Void
     let onCyclePriority: () -> Void
@@ -1749,7 +1805,7 @@ struct MemoRow: View {
                     PointsEditor(
                         points: $editingPoints,
                         draft: $editingPointDraft,
-                        onSubmit: onSubmitPoint
+                        onAdd: onAddPoint
                     )
                 } else if item.hasPoints {
                     VStack(alignment: .leading, spacing: 1.5) {

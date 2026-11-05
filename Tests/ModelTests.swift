@@ -36,6 +36,7 @@ testSpan()
     testBulletPoints()
     testPriorityFirstSorting()
     testBulletLimitIsThree()
+    testAddButtonGating()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -1271,6 +1272,65 @@ func testConfirmButtonContrast() {
           "深色模式下按钮底应比面板亮（实心是浅色块）")
     check(lum(lightFill) < lum(lightPanel),
           "浅色模式下按钮底应比面板暗（实心是深色块）")
+}
+
+@MainActor
+
+
+/// 加号按钮什么时候可点。
+///
+/// PointsEditor 里 canCommit = canAdd && normalizeBullet(draft) != nil。
+/// 这两条规则决定了按钮亮不亮，也就决定了用户能不能添加，
+/// 必须逐个钉死——尤其"输入全是空白"这种边界。
+func testAddButtonGating() {
+    func canAdd(_ pts: [String]) -> Bool { UILogic.canAddBullet(pts) }
+    func canCommit(_ pts: [String], _ draft: String) -> Bool {
+        canAdd(pts) && UILogic.normalizeBullet(draft) != nil
+    }
+
+    let empty: [String] = []
+
+    // 未满 + 有内容 → 可点
+    check(canCommit(empty, "买牛奶"), "未满且有内容时应可点")
+    check(canCommit(["a"], "b"), "未满且有内容时应可点")
+
+    // 未满 + 空/空白 → 不可点
+    check(!canCommit(empty, ""), "空输入时不可点")
+    check(!canCommit(empty, "   "), "全是空白时不可点")
+    check(!canCommit(empty, "\n\n"), "只有换行时不可点")
+
+    // 已满 → 无论输入什么都不点
+    let full = ["a", "b", "c"]
+    check(!canAdd(full), "满 3 条后 canAdd 应为假")
+    check(!canCommit(full, "还想加"), "已满时即使有内容也不可点")
+    check(!canCommit(full, ""), "已满时空输入也不可点")
+
+    // 删掉一条后恢复可点
+    let freed = UILogic.removingBullet(full, at: 1)
+    check(canAdd(freed), "删掉一条后应恢复可加")
+    check(canCommit(freed, "补一条"), "删除后应有内容即可点")
+
+    // 前后空白不影响判定
+    check(canCommit(empty, "  有内容  "), "首尾空白不应影响可点判断")
+
+    // 超长内容仍可添加（会被截断，但不该阻止点击）
+    let long = String(repeating: "字", count: 500)
+    check(canCommit(empty, long), "超长内容也应可点（内部会截断）")
+
+    // 点击后 draft 应清空（模拟 appendEditingPoint 的行为）
+    var pts: [String] = []
+    var draft = "第一条"
+    let before = pts.count
+    pts = UILogic.appendingBullet(pts, draft)
+    if pts.count > before { draft = "" }
+    check(pts == ["第一条"] && draft.isEmpty, "添加后应入列并清空输入框")
+
+    // 空白提交不应清空已有内容，也不应增加条目
+    var pts2 = ["已有"]
+    let draft2 = "   "
+    let before2 = pts2.count
+    pts2 = UILogic.appendingBullet(pts2, draft2)
+    check(pts2.count == before2, "空白提交不应新增条目")
 }
 
 @MainActor
