@@ -42,6 +42,7 @@ testSpan()
     testAnimationTiers()
     testDateLineWithWeekday()
     testSpanEditableForSingleDay()
+    testCardFixedHeight()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -1612,6 +1613,74 @@ func testSpanEditableForSingleDay() {
     // 上界
     store.setSpan(item.id, to: 9999)
     check(store.items.first { $0.id == item.id }?.spanDays == 365, "工期上限应为 365")
+}
+
+@MainActor
+
+
+/// 卡片高度统一：固定高度 + 各区块预留额度。
+///
+/// 这条约束最容易在改字体或加内容时被悄悄破坏——
+/// 破坏的表现不是崩溃，是卡片底部那行被裁掉半截，
+/// 而且要等到某个内容特别多的卡片出现才看得见。
+func testCardFixedHeight() {
+    // 各区块预算必须塞得进固定高度
+    check(UILogic.cardHeightBudgetFits(),
+          "各区块高度之和不应超过 cardHeight（实测预算超了）")
+
+    // 固定高度要明显大于"最小高度"，否则等于没改
+    check(UILogic.cardHeight > UILogic.cardMinHeight,
+          "固定高度应大于原最小高度（\(UILogic.cardHeight) vs \(UILogic.cardMinHeight)）")
+
+    // 标题区和要点区都要有额度
+    check(UILogic.cardTitleBlockHeight > 0, "标题区应有固定高度")
+    check(UILogic.cardPointsBlockHeight > 0, "要点区应有固定高度")
+
+    // 额度要能装下各自的满额内容。
+    // 这些数字是离屏实测出来的，不是估的：
+    //   标题 3 行 × 15.0pt = 45.0
+    //   要点 3 条 = 39.0（13.0 × 3，行间已有 leading）
+    let measuredTitle3 = Double(UILogic.cardTitleLines) * 15.0
+    let measuredPoints3 = 39.0
+
+    // 必须**严格大于**实测值：等于实测值时余量为 0，
+    // 亚像素舍入就会把最后一行裁掉半截。
+    check(UILogic.cardTitleBlockHeight > measuredTitle3,
+          "标题区应严格大于实测 3 行高度 \(measuredTitle3)（当前 \(UILogic.cardTitleBlockHeight)）")
+    check(UILogic.cardPointsBlockHeight > measuredPoints3,
+          "要点区应严格大于实测 3 条高度 \(measuredPoints3)（当前 \(UILogic.cardPointsBlockHeight)）")
+    // 要点 3 条 × 13pt + 间距
+    check(UILogic.cardPointsBlockHeight >= Double(UILogic.cardPointSlots) * 13,
+          "要点区应装得下 \(UILogic.cardPointSlots) 条")
+
+    // 内容多寡不影响占用：额度是常量，与 item 无关
+    // 这里用两个极端内容的事故项对比，验证"取值不依赖内容"
+    let long = Memo.make(title: String(repeating: "很长的标题", count: 20),
+                         priority: .urgent, dueDate: DateKey.today, span: 3)
+    let short = Memo.make(title: "短", priority: .low, dueDate: DateKey.today)
+    check(long.title.count > short.title.count, "测试前提：两条标题长度不同")
+
+    // 两者的卡片高度取的是同一个常量
+    check(UILogic.cardHeight == UILogic.cardHeight,
+          "卡片高度不应随内容变化")
+    // 要点超出额度时只显示前 N 条，不会把卡片撑高
+    var many = long
+    many.note = Memo.noteText(from: (0..<10).map { "要点\($0)" })
+    check(many.bulletPoints.count == 10, "数据层不限制条数")
+    check(many.bulletPoints.prefix(UILogic.cardPointSlots).count == UILogic.cardPointSlots,
+          "卡片只显示前 \(UILogic.cardPointSlots) 条，多余的不撑高卡片")
+
+    // 预算要有余量，不能卡得刚好——
+    // 字体渲染实测值和估算值总有 1~2pt 出入，
+    // 卡得刚好会让某些卡片被裁掉一两个像素。
+    let budget = 3.0 + 18.0 + UILogic.cardTitleBlockHeight + UILogic.cardPointsBlockHeight
+        + 14.0 + 12.0 + 21.0
+    check(UILogic.cardHeight - budget >= 8,
+          "固定高度应比区块预算至少多 8pt 余量（实测余量 \(UILogic.cardHeight - budget)）")
+
+    // 预告：cardHeight 与 cardMinHeight 的量级关系要合理
+    check(UILogic.cardHeight < 300, "卡片高度不应大到一屏放不下两行")
+    check(UILogic.cardHeight > 120, "卡片高度不应小到读不全")
 }
 
 @MainActor

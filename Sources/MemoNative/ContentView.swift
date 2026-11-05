@@ -712,6 +712,18 @@ struct ContentView: View {
                 emptyState
             } else if ui.layout == .card {
                 cardArea
+                    // 列表 ↔ 卡片交叉淡入，并沿切换方向轻微错位：
+                    // 卡片"铺开"，列表"收起"。
+                    // 只淡入淡出会显得两张列表叠在一起化掉，
+                    // 加一点位移才有"换了一种摊法"的感觉。
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity
+                                .combined(with: .scale(scale: 0.98, anchor: .top)),
+                            removal: .opacity
+                                .combined(with: .scale(scale: 1.01, anchor: .top))
+                        )
+                    )
             } else {
                 ScrollView {
                     // 不再按日期分组。
@@ -736,9 +748,21 @@ struct ContentView: View {
                 }
                 .scrollIndicators(.never)
                 .background(Color.clear)
+                // 与卡片对称：列表"收起"时略微收拢，卡片"铺开"时略放大。
+                .transition(
+                    .asymmetric(
+                        insertion: .opacity
+                            .combined(with: .scale(scale: 1.01, anchor: .top)),
+                        removal: .opacity
+                            .combined(with: .scale(scale: 0.98, anchor: .top))
+                    )
+                )
             }
         }
         .animation(Theme.move, value: visibleItems.isEmpty)
+        // 排布切换的驱动：Group 内两分支的 transition 靠这个事务生效。
+        // 挂在容器上而不是每个分支上，两边的进出才共用一条时间轴。
+        .animation(reduceMotion ? nil : Theme.move, value: ui.layout)
     }
 
     /// 单张卡片。同样为了避开类型检查超时而抽出来。
@@ -823,6 +847,9 @@ struct ContentView: View {
                     }
                 }
                 .padding(.horizontal, horizontalPadding)
+                // 顶部留 3pt：悬停时卡片会上浮 1.5pt，
+                // 不留空间第一行会被 ScrollView 裁掉上边缘。
+                .padding(.top, 3)
                 .padding(.bottom, 8)
                 .animation(Theme.rowInsert, value: visibleItems.map(\.id))
             }
@@ -1789,6 +1816,10 @@ struct MemoCard: View {
             Rectangle()
                 .fill(item.done ? Theme.inkQuaternary.opacity(0.5) : item.priority.tint)
                 .frame(height: 3)
+                // 悬停时顶带横向"涨"一点：从 88% 宽度回到满宽。
+                // 比整块变色含蓄，但眼睛能捕捉到卡片"醒了"。
+                .scaleEffect(x: hover.hovering ? 1 : 0.88, y: 1, anchor: .leading)
+                .animation(Theme.move, value: hover.hovering)
 
             VStack(alignment: .leading, spacing: 7) {
                 // ── 第一行：标题 + 勾选 ──
@@ -1820,10 +1851,16 @@ struct MemoCard: View {
                             .font(.system(size: 12.5, weight: .medium))
                             .strikethrough(item.done, color: Color.secondary.opacity(0.55))
                             .foregroundStyle(item.done ? Theme.inkTertiary : Theme.ink)
-                            .lineLimit(3)
+                            .lineLimit(UILogic.cardTitleLines)
                             .multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            // 固定占满三行的高度：内容只有一行时也留白，
+                            // 这样每张卡的标题区一样高，日期行才会对齐。
+                            .frame(
+                                maxWidth: .infinity,
+                                minHeight: UILogic.cardTitleBlockHeight,
+                                alignment: .topLeading
+                            )
                             .contentShape(Rectangle())
                             // 单击即编辑：卡片面积大，双击反而多余；
                             // 列表用双击是因为行很窄，单击容易误触。
@@ -1888,9 +1925,13 @@ struct MemoCard: View {
                         onAdd: onAddPoint,
                         onFocusGained: onFocusInPoints
                     )
-                } else if item.hasPoints {
+                } else {
+                    // 要点区固定占三行的高度。
+                    // 没有要点的卡片也留出这块空白——
+                    // 否则它的日期行会往上顶，和邻卡的日期行错开。
                     VStack(alignment: .leading, spacing: 2) {
-                        ForEach(Array(item.bulletPoints.enumerated()), id: \.offset) { _, point in
+                        ForEach(Array(item.bulletPoints.prefix(UILogic.cardPointSlots).enumerated()),
+                                id: \.offset) { _, point in
                             HStack(alignment: .top, spacing: 5) {
                                 Circle()
                                     .fill(Theme.inkQuaternary)
@@ -1903,6 +1944,11 @@ struct MemoCard: View {
                             }
                         }
                     }
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: UILogic.cardPointsBlockHeight,
+                        alignment: .topLeading
+                    )
                     .padding(.top, 1)
                 }
 
@@ -1974,10 +2020,13 @@ struct MemoCard: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 9)
         }
-        // 不写死高度：标题最多三行，1 行与 3 行相差 34pt。
-        // 网格里同一行的卡片会被 LazyVGrid 拉齐到最高者，
-        // 所以视觉上仍然整齐，不会参差。
-        .frame(minHeight: UILogic.cardMinHeight, alignment: .top)
+        // 固定高度。
+        //
+        // 早先用 minHeight 并指望 LazyVGrid 把同一行的卡片拉齐——
+        // 但 LazyVGrid 拉齐的是行高，不是每张卡自己的底色块：
+        // 内容少的卡背景仍短一截，两列并排看着参差。
+        // 现在把高度钉死，标题区和要点区各自预留固定额度。
+        .frame(height: UILogic.cardHeight, alignment: .top)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(hover.hovering ? Theme.surfaceRaised : Theme.surface)
@@ -1993,6 +2042,18 @@ struct MemoCard: View {
                 )
         )
         .opacity(item.done ? 0.62 : 1)
+        // 悬停：整张卡轻轻上浮。
+        //
+        // 不用阴影——这个界面的所有浮层都不带阴影，卡片也不该破例。
+        // 用"上移 1.5pt + 放大 1.2%"表达浮起，配合描边加深，
+        // 三层叠加比单改背景色有存在感得多。
+        //
+        // offset 用 move（较慢）而背景色用 hover（很快）：
+        // 颜色该立刻响应，位移稍慢一点才有重量感。
+        // 两个节奏错开，动作看起来就不是生硬的一起变。
+        .offset(y: hover.hovering ? -1.5 : 0)
+        .scaleEffect(hover.hovering ? 1.012 : 1)
+        .animation(Theme.move, value: hover.hovering)
         .scaleEffect(hover.pressed ? 0.975 : 1)
         .animation(Theme.confirm, value: hover.pressed)
         .onHover { inside in

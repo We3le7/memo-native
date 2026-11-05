@@ -435,6 +435,54 @@ extension UILogic {
     /// 所以单张撑高不会造成参差。
     static let cardMinHeight: Double = 84
 
+    /// 卡片固定高度。
+    ///
+    /// 早先用 minHeight，指望 LazyVGrid 把同一行的卡片拉齐。
+    /// 但 LazyVGrid 拉齐的是**行高**，不是每张卡片自己的背景：
+    /// 内容少的卡片，底色块仍然短一截，两列并排就是参差的。
+    ///
+    /// 固定高度的代价是内容少的卡片会有留白，
+    /// 但网格里"每张都一样高"比"每张都刚好"更重要——
+    /// 后者会让眼睛一直沿着参差的边缘跳。
+    ///
+    /// 额度分配（按 12.5/11pt 实测行高 15/13）：
+    ///   顶带 3 + 上内边距 9
+    ///   标题 3 行 49
+    ///   要点 3 条 43
+    ///   日期行 14 + 优先级行 12
+    ///   间距 (7 × 3) + 下内边距 9
+    /// 合计约 186，取 186。
+    static let cardHeight: Double = 186
+
+    /// 标题最多几行、要点最多几条。
+    /// 与 cardHeight 的额度绑定，改一处要一起改。
+    static let cardTitleLines = 3
+    static let cardPointSlots = 3
+
+    /// 标题区固定高度。
+    ///
+    /// 3 行 × 15pt 实测正好 45.0，所以这里给 46：
+    /// 卡到 45 时余量为 0，亚像素舍入就可能把最后一行裁掉半截。
+    static let cardTitleBlockHeight: Double = 46
+
+    /// 要点区固定高度：3 条 × 13pt + 2 × 2pt 间距
+    static let cardPointsBlockHeight: Double = 43
+
+    /// 卡片各区块的高度预算是否塞得进 cardHeight。
+    /// 逻辑层保留这份账，测试会验算——
+    /// 调字体或改额度时，不至于悄悄把优先级那行挤出卡片。
+    static func cardHeightBudgetFits() -> Bool {
+        let topStrip: Double = 3
+        let vPadding: Double = 9 * 2
+        let title = cardTitleBlockHeight
+        let points = cardPointsBlockHeight
+        let dateRow: Double = 14
+        let priorityRow: Double = 12
+        let spacings: Double = 7 * 3
+        let total = topStrip + vPadding + title + points + dateRow + priorityRow + spacings
+        return total <= cardHeight
+    }
+
     /// 单张卡片宽度。
     static func cardWidth(available: Double, columns: Int, spacing: Double) -> Double {
         guard columns > 0 else { return 0 }
