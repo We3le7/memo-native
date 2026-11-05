@@ -16,6 +16,43 @@
 | **测试** | 674 项断言，`./scripts/test.sh` |
 | **分发** | 无需签名，本地 ad-hoc |
 
+## 一键安装
+
+```bash
+git clone --depth 1 https://github.com/We3le7/memo-native.git ~/memo-native && cd ~/memo-native && ./scripts/build.sh && ./scripts/install.sh && open -a MemoNative
+```
+
+约 45 秒。装完自动启动，按 `⌥Space` 就能用。
+
+**只需要 Command Line Tools**，不用 Xcode：
+
+```bash
+xcode-select --install   # 没装过的话先跑这句
+```
+
+命令拆开看就是三步（也可以单独执行）：
+
+```bash
+./scripts/build.sh     # 编译出 build/MemoNative.app
+./scripts/install.sh   # 复制到 /Applications 并注册 URL Scheme
+open -a MemoNative     # 启动
+```
+
+装好后想删干净：
+
+```bash
+pkill -f MemoNative
+rm -rf /Applications/MemoNative.app ~/Applications/MemoNative.app ~/memo-native
+rm -rf ~/Library/Application\ Support/MemoNative   # 这一行会删数据，谨慎
+```
+
+（两个路径都写进去是因为 `install.sh` 在 `/Applications` 不可写时
+会退回到 `~/Applications`，两个位置都可能存在。）
+
+> **首次启动请允许通知**，否则提醒会走 `osascript` 降级通道
+> （仍然会弹，但点通知不能回跳）。
+
+
 ---
 
 ## 界面
@@ -70,22 +107,33 @@
 
 ## 构建与运行
 
-本机只需 Command Line Tools（不需要完整 Xcode）：
+开发时改完代码，不必安装，直接跑构建产物即可：
 
 ```bash
 cd memo-native
-./scripts/build.sh                 # 编译出 build/MemoNative.app
-open build/MemoNative.app          # 运行
+./scripts/build.sh          # 编译出 build/MemoNative.app
+open build/MemoNative.app   # 运行
 ```
 
-装到「应用程序」目录（需要在你自己终端里执行，我的沙箱无权写 /Applications）：
+安装步骤见文首「一键安装」。构建产物是自包含的 `.app`，
+也可以手动 `cp -R build/MemoNative.app /Applications/`。
+
+`install.sh` 会优先装到 `/Applications`；那里不可写时
+自动退回到 `~/Applications`，不需要管理员权限。
+
+**调试用环境变量**（要从二进制直跑才看得到输出，`open` 会吞掉 stdout）：
 
 ```bash
-cp -R memo-native/build/MemoNative.app /Applications/
-open /Applications/MemoNative.app
+MEMO_FPS=1 build/MemoNative.app/Contents/MacOS/MemoNative   # 打印帧率
+MEMO_SLOW=3 build/MemoNative.app/Contents/MacOS/MemoNative  # 动画放慢 3 倍
 ```
 
-> 首次启动会自动弹出面板并请求通知权限。**建议允许通知**；若拒绝，提醒会自动降级到 `osascript` 通道，仍然会弹，只是点通知不能回跳 App。
+`MEMO_FPS` 的实际输出：
+
+```
+[FPS] 展开: 平均 60.0 fps, p95 间隔 16.9ms, 掉帧 0/22
+[FPS] 折叠: 平均 59.8 fps, p95 间隔 17.4ms, 掉帧 0/22
+```
 
 ## 随手召唤的四种方式
 
@@ -1226,13 +1274,23 @@ t=0.34  面板 scale 0.060 op 0.00  |  球 scale 1.000 op 1.00
 
 ```bash
 open memo://toggle                                   # 显示/隐藏面板
+open memo://settings                                 # 打开设置窗口
+open memo://collapse                                 # 收起面板（留下悬浮球）
+open memo://orb                                      # 只显示悬浮球
 open "memo://add?title=买牛奶"                        # 直接新增（默认今天/普通）
 open "memo://add?title=交报表&priority=high&due=2026-11-06"
-open memo://remind                                   # 立即推送一次提醒
 open "memo://delete?title=关键词"                     # 按标题关键词删除
+open memo://remind                                   # 立即推送一次提醒（诊断用）
 ```
 
-`priority` 取值：`urgent` / `high` / `normal` / `low`。
+| 参数 | 取值 |
+|---|---|
+| `priority` | `urgent` / `high` / `normal` / `low` |
+| `due` | `YYYY-MM-DD`，非法值会被规范成今天 |
+
+还有一个 `memo://simspace`，用来模拟一次桌面切换、验证状态收敛，属于诊断入口。
+
+`add` 不带 `title` 时等同于 `toggle`；无法识别的 action 也按 `toggle` 处理。
 
 ## 每天 09:00 提醒怎么工作
 
