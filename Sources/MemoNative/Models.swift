@@ -135,6 +135,16 @@ enum DateKey {
         return string(from: shifted)
     }
 
+    /// 把任意输入规范成合法日期键；解析不了就归为今天。
+    ///
+    /// 存在的唯一理由是：是这个 App 有外部输入入口（URL Scheme），
+    /// 而 DateKey 其余地方的失败策略是"静默按今天算"。
+    /// 那个策略对内部调用是对的（不该因为日期算不出来就崩），
+    /// 但外部的坏值不该被**存进**数据文件。
+    static func normalized(_ key: String) -> String {
+        date(from: key) == nil ? today : key
+    }
+
     static func days(from key: String) -> Int {
         guard let target = date(from: key) else { return 0 }
         let cal = Calendar.current
@@ -387,7 +397,11 @@ final class MemoStore: ObservableObject {
         var item = Memo.make(
             title: String(trimmed.prefix(200)),
             priority: priority,
-            dueDate: dueDate,
+            // 日期必须规范化。URL Scheme 的 due 参数是外部输入
+            //（memo://add?due=garbage），而 DateKey 解析失败时会
+            // 静默降级成"今天"——如果不在这里挡住，坏值会原样存进
+            // items，之后每次排序、显示都在跟一个非法日期字符串打交道。
+            dueDate: DateKey.normalized(dueDate),
             span: max(1, span)
         )
         item.note = Memo.noteText(from: note.components(separatedBy: "\n"))

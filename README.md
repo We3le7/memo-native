@@ -473,6 +473,17 @@ private var foldGeneration = 0
 
 改用代数（`pulseGeneration`）作废旧任务，只认最新那个的收尾。
 
+#### 外部输入的日期要规范化
+
+`memo://add?title=x&due=garbage` 是真实可达的入口——快捷指令、Raycast、
+终端都能构造它。
+
+`DateKey` 的失败策略是"解析不了就静默按今天算"。这对内部调用是对的
+（不该因为日期算不出来就崩），但外部的坏值不该被**存进**数据文件。
+
+`MemoStore.add` 里过一道 `DateKey.normalized`：解析不了就归为今天，
+保证 items 里永远只有合法日期键。
+
 #### 排序曾经把界面卡死一秒
 
 这是项目里影响最大的一处性能问题，而且藏得很深。

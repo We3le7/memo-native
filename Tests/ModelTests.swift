@@ -47,6 +47,7 @@ testSpan()
     testPointsInputVisibility()
     testInputIconContrast()
     testSortCacheInvalidation()
+    testExternalDateNormalization()
     testSortCacheInvalidation()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
@@ -2113,4 +2114,47 @@ func testSortCacheInvalidation() {
     defer { try? FileManager.default.removeItem(at: emptyTmp) }
     let emptyStore = MemoStore(fileURL: emptyTmp)
     check(emptyStore.sortedItems.isEmpty, "空库应返回空数组")
+}
+
+/// 外部输入（URL Scheme）传进来的日期必须被规范化。
+///
+/// memo://add?title=x&due=garbage 是真实可达的入口——
+/// 快捷指令、Raycast、终端都能构造它。
+/// DateKey 解析失败时会静默降级成"今天"，
+/// 若不在入口挡住，坏字符串会原样存进数据文件，
+/// 之后每次排序和显示都在跟一个非法日期打交道。
+@MainActor
+func testExternalDateNormalization() {
+    let tmp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("date-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: tmp) }
+    let store = MemoStore(fileURL: tmp)
+    let today = DateKey.today
+
+    // 合法日期：保持原样
+    check(DateKey.normalized("2026-11-05") == "2026-11-05", "合法日期应保持原样")
+    check(DateKey.normalized(today) == today, "今天的键应保持原样")
+
+    // 非法输入：归为今天
+    check(DateKey.normalized("garbage") == today, "乱码应归为今天")
+    check(DateKey.normalized("") == today, "空串应归为今天")
+    check(DateKey.normalized("2026-13-45") == today, "越界日期应归为今天")
+    check(DateKey.normalized("not-a-date") == today, "非日期应归为今天")
+
+    // 通过 add 进来也一样
+    guard let bad = store.add(title: "坏日期", priority: .normal, dueDate: "garbage") else {
+        check(false, "add 应成功"); return
+    }
+    check(bad.dueDate == today, "坏日期入库时应被规范化（实际 \(bad.dueDate)）")
+    check(store.items.contains { $0.id == bad.id && $0.dueDate == today },
+          "存进 items 的也必须已是规范值")
+
+    // 规范化后不应影响排序和天数计算
+    check(DateKey.days(from: bad.dueDate) == 0, "规范化后应按今天算")
+    check(!DateKey.normalized("2026-11-05").isEmpty, "不应产生空键")
+
+    // 单日 0 或负数工期该被抬到 1
+    if let zeroSpan = store.add(title: "零工期", priority: .low, dueDate: today, span: 0) {
+        check(zeroSpan.spanDays >= 1, "工期应被抬到至少 1（实际 \(zeroSpan.spanDays)）")
+    }
 }
