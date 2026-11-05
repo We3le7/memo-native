@@ -448,9 +448,11 @@ extension UILogic {
 extension UILogic {
     /// 子要点条数上限。
     ///
-    /// 不是技术限制，是产品判断：超过这个数就不是"一件事的要点"，
+    /// 3 条。不是技术限制，是产品判断：超过三条就不是"一件事的要点"，
     /// 而是另一份清单，该单独建一条事项了。
-    static let maxBulletPoints = 12
+    /// 控制在 3 条也让要点区常驻成为可能——固定高度，
+    /// 不会因为加了很多条把输入框顶得老高。
+    static let maxBulletPoints = 3
 
     /// 单条要点的字数上限
     static let maxBulletLength = 120

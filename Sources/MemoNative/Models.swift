@@ -180,15 +180,45 @@ struct DueLabel: Equatable {
 // MARK: - 排序
 
 enum MemoSort {
+    /// 排序：先看紧急程度，同档再按日期，最后按创建时间。
+    ///
+    /// 以前是日期优先——那时候界面上按日期分组，日期是分类依据，
+    /// 排序自然跟着分组走。现在改成不分组、日期显示在事项内部，
+    /// 日期就不再是"组织方式"，而只是"这条事项的一个属性"。
+    ///
+    /// 组织方式应该反映用户打开面板时最想知道的事：
+    /// **哪几件最该先做**。那就是紧急程度。
+    ///
+    /// 一个例外：逾期的排在**所有**未逾期之前，哪怕紧急度更低。
+    /// 已经过期三天的事，再"不紧急"也该先处理——
+    /// 这也是唯一一处日期能压过优先级的地方。
     static func sorted(_ items: [Memo]) -> [Memo] {
         items.sorted { lhs, rhs in
-            if lhs.dueDate != rhs.dueDate { return lhs.dueDate < rhs.dueDate }
+            // 1. 未完成的在前
             if lhs.done != rhs.done { return !lhs.done }
-            if lhs.priority.rank != rhs.priority.rank { return lhs.priority.rank < rhs.priority.rank }
+
+            // 2. 逾期的排在所有未逾期的之前（仅未完成项参与比较）
+            let lo = lhs.dueLabel.isOverdue
+            let ro = rhs.dueLabel.isOverdue
+            if lo != ro { return lo }
+
+            // 3. 紧急程度
+            if lhs.priority.rank != rhs.priority.rank {
+                return lhs.priority.rank < rhs.priority.rank
+            }
+
+            // 4. 同档内按到期日
+            if lhs.dueDate != rhs.dueDate { return lhs.dueDate < rhs.dueDate }
+
+            // 5. 最后按创建时间，保证顺序稳定
             return lhs.createdAt < rhs.createdAt
         }
     }
 
+    /// 保留分组能力，但界面已不再用它组织列表。
+    ///
+    /// 仍然留着：卡片视图一旦要做日期分栏、或导出时按天汇总，
+    /// 都会需要这个逻辑。删掉再写回来不值当。
     static func grouped(_ items: [Memo]) -> [(key: String, items: [Memo])] {
         var order: [String] = []
         var buckets: [String: [Memo]] = [:]

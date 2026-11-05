@@ -33,28 +33,53 @@ testSpan()
     testPaletteContrast()
     testCardGrid()
     testBulletPoints()
+    testPriorityFirstSorting()
+    testBulletLimitIsThree()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
     testPriorityBreakdown()
 
-// 1. 排序：日期 → 完成态 → 优先级
-let base = Memo(id: "x", title: "", priority: .normal, dueDate: "2026-11-05", note: "",
-                done: false, createdAt: "2026-11-01T09:00:00+08:00", completedAt: nil)
-var items: [Memo] = [
-    Memo(id: "a", title: "后天-低", priority: .low, dueDate: "2026-11-06", note: "", done: false, createdAt: "2026-11-01T09:00:00+08:00", completedAt: nil),
-    Memo(id: "b", title: "今天-普通", priority: .normal, dueDate: "2026-11-03", note: "", done: false, createdAt: "2026-11-01T09:00:00+08:00", completedAt: nil),
-    Memo(id: "c", title: "后天-紧急", priority: .urgent, dueDate: "2026-11-06", note: "", done: false, createdAt: "2026-11-01T09:00:00+08:00", completedAt: nil),
-    Memo(id: "d", title: "今天-已完成", priority: .urgent, dueDate: "2026-11-03", note: "", done: true, createdAt: "2026-11-01T09:00:00+08:00", completedAt: nil),
+// 1. 排序：完成态 → 逾期 → 紧急程度 → 日期 → 创建时间
+//
+// 相对日期用"今天±N"算，不写死绝对日期——
+// 写死会让测试依赖运行当天（之前踩过：测试里写 2026-11-03，
+// 到了 11-05 那条就变成"逾期 2 天"，断言含义悄悄变了）。
+func day(_ offset: Int) -> String {
+    DateKey.add(days: offset, to: DateKey.today)
+}
+func sample(_ id: String, _ title: String, _ p: Priority,
+            _ dueOffset: Int, done: Bool = false,
+            created: String = "2026-11-01T09:00:00+08:00") -> Memo {
+    Memo(id: id, title: title, priority: p, dueDate: day(dueOffset), note: "",
+         done: done, createdAt: created, completedAt: nil)
+}
+let items: [Memo] = [
+    sample("a", "三天后-低", .low, 3),
+    sample("b", "今天-普通", .normal, 0),
+    sample("c", "三天后-紧急", .urgent, 3),
+    sample("d", "今天-已完成", .urgent, 0, done: true),
+    sample("e", "逾期两天-低", .low, -2),
+    sample("f", "明天-紧急", .urgent, 1),
 ]
-_ = base
 let order = MemoSort.sorted(items).map(\.title)
-check(order == ["今天-普通", "今天-已完成", "后天-紧急", "后天-低"], "排序：日期 → 完成态 → 优先级（实际：\(order)）")
+// 逾期的最先（哪怕紧急度最低），然后按紧急程度，同档内按日期
+check(order == ["逾期两天-低", "明天-紧急", "三天后-紧急", "今天-普通", "三天后-低", "今天-已完成"],
+      "排序：逾期 → 紧急程度 → 日期 → 完成态（实际：\(order)）")
 
-// 2. 分组
+// 紧急程度优先于日期：紧急的"三天后"要排在普通的"今天"之前
+let ci = order.firstIndex(of: "三天后-紧急")!
+let bi = order.firstIndex(of: "今天-普通")!
+check(ci < bi, "紧急的三天后应排在普通的今天之前（紧急程度优先）")
+
+// 已完成的沉底，哪怕它最紧急
+let lastIdx = order.count - 1
+check(order[lastIdx] == "今天-已完成", "已完成的应排在最后")
+
+// 2. 分组（界面已不再使用，但函数保留，仍应正确）
 let grouped = MemoSort.grouped(MemoSort.sorted(items))
-check(grouped.count == 2, "分组数量为 2")
-check(grouped[0].key == "2026-11-03" && grouped[1].key == "2026-11-06", "分组按日期升序")
+check(grouped.count == 4, "按日期应分成 4 组（-2/0/1/3 天）")
+check(grouped.map(\.key) == grouped.map(\.key).sorted(), "分组按日期升序")
 
 // 3. 日期标签
 let today = DateKey.today
@@ -67,13 +92,16 @@ let o = DueLabel(dateKey: overdue)
 check(o.text == "逾期 3 天" && o.isOverdue, "逾期标签（实际：\(o.text)）")
 
 // 4. 摘要
-let pendingDigest = Digest.body(for: items.filter { !$0.done }, limit: 2)
-check(pendingDigest.contains("共 3 项未完成"), "摘要头部")
-check(pendingDigest.contains("另有 1 项"), "摘要截断（实际：\(pendingDigest)）")
+let pendingOnly = items.filter { !$0.done }
+let pendingDigest = Digest.body(for: pendingOnly, limit: 2)
+check(pendingDigest.contains("共 \(pendingOnly.count) 项未完成"),
+      "摘要头部（实际：\(pendingDigest)）")
+check(pendingDigest.contains("另有 \(pendingOnly.count - 2) 项"),
+      "摘要截断（实际：\(pendingDigest)）")
 
 // 5. 编码往返：与 Python 版格式兼容
-let sample = Memo.make(title: "编码测试", priority: .high, dueDate: "2026-11-06")
-let encoded = try! JSONEncoder().encode(sample)
+let encodeCase = Memo.make(title: "编码测试", priority: .high, dueDate: "2026-11-06")
+let encoded = try! JSONEncoder().encode(encodeCase)
 let decoded = try! JSONDecoder().decode(Memo.self, from: encoded)
 check(decoded.title == "编码测试" && decoded.priority == .high, "JSON 往返")
 let json = String(data: encoded, encoding: .utf8)!
@@ -1057,6 +1085,7 @@ func testBulletPoints() {
           "序列化再解析应还原")
 
     // ── 清洗 ──
+    check(UILogic.maxBulletPoints == 3, "要点上限应为 3 条")
     check(UILogic.normalizeBullet("  ") == nil, "全空白应丢弃")
     check(UILogic.normalizeBullet("  有效  ") == "有效", "应去首尾空白")
     let long = String(repeating: "字", count: 300)
@@ -1109,6 +1138,85 @@ func testBulletPoints() {
         check(false, "add 应成功")
     }
     try? FileManager.default.removeItem(at: tmp)
+}
+
+@MainActor
+
+
+/// 排序以紧急程度为准，日期降级为事项内部的属性。
+///
+/// 这条规则的边界要逐个钉死，因为排序一改，
+/// 所有跟"顺序"相关的直觉都会变。
+func testPriorityFirstSorting() {
+    func day(_ d: Int) -> String { DateKey.add(days: d, to: DateKey.today) }
+    func mk(_ id: String, _ p: Priority, _ due: Int,
+            done: Bool = false, created: String = "2026-01-01T00:00:00+08:00") -> Memo {
+        Memo(id: id, title: id, priority: p, dueDate: day(due), note: "",
+             done: done, createdAt: created, completedAt: nil)
+    }
+
+    // 紧急程度压过日期：紧急的"下周"排在普通的"今天"之前
+    let a = MemoSort.sorted([mk("普通今天", .normal, 0), mk("紧急下周", .urgent, 7)])
+    check(a.map(\.id) == ["紧急下周", "普通今天"],
+          "紧急程度应优先于日期（实际：\(a.map(\.id))）")
+
+    // 四档的完整顺序
+    let b = MemoSort.sorted([mk("低", .low, 0), mk("普通", .normal, 0),
+                             mk("高", .high, 0), mk("紧急", .urgent, 0)])
+    check(b.map(\.id) == ["紧急", "高", "普通", "低"],
+          "应按紧急→高→普通→低排列（实际：\(b.map(\.id))）")
+
+    // 同档内按日期
+    let c = MemoSort.sorted([mk("后天", .normal, 2), mk("今天", .normal, 0),
+                             mk("明天", .normal, 1)])
+    check(c.map(\.id) == ["今天", "明天", "后天"], "同档内应按日期升序")
+
+    // 逾期压过一切未逾期的，哪怕紧急度最低
+    let d = MemoSort.sorted([mk("紧急今天", .urgent, 0), mk("低已逾期", .low, -1)])
+    check(d.map(\.id) == ["低已逾期", "紧急今天"],
+          "逾期的应排在所有未逾期之前（实际：\(d.map(\.id))）")
+
+    // 逾期之间仍按紧急程度
+    let e = MemoSort.sorted([mk("逾期低", .low, -2), mk("逾期紧急", .urgent, -1)])
+    check(e.map(\.id) == ["逾期紧急", "逾期低"], "逾期之间应按紧急程度")
+
+    // 已完成永远沉底，哪怕最紧急、已逾期
+    let f = MemoSort.sorted([mk("完成", .urgent, -5, done: true), mk("低未完成", .low, 3)])
+    check(f.map(\.id) == ["低未完成", "完成"], "已完成的应排最后")
+
+    // 同档同日按创建时间，保证顺序稳定
+    let g = MemoSort.sorted([
+        mk("晚建", .normal, 0, created: "2026-01-02T00:00:00+08:00"),
+        mk("早建", .normal, 0, created: "2026-01-01T00:00:00+08:00"),
+    ])
+    check(g.map(\.id) == ["早建", "晚建"], "同档同日应按创建时间")
+
+    // 排序必须与输入顺序无关（否则 animate 时会跳）
+    let base = [mk("a", .high, 1), mk("b", .low, 0), mk("c", .urgent, 2)]
+    check(MemoSort.sorted(base).map(\.id) == MemoSort.sorted(base.reversed()).map(\.id),
+          "排序结果应与输入顺序无关")
+}
+
+/// 要点上限是 3 条。
+func testBulletLimitIsThree() {
+    check(UILogic.maxBulletPoints == 3, "要点上限应为 3 条")
+
+    var pts: [String] = []
+    for i in 0..<5 {
+        pts = UILogic.appendingBullet(pts, "第\(i)条")
+    }
+    check(pts == ["第0条", "第1条", "第2条"],
+          "超过 3 条应被截断（实际：\(pts)）")
+    check(!UILogic.canAddBullet(pts), "满 3 条后不能再加")
+
+    // 删掉一条后应能再加
+    let after = UILogic.removingBullet(pts, at: 0)
+    check(UILogic.canAddBullet(after), "删掉一条后应能再加")
+    check(UILogic.appendingBullet(after, "新").count == 3, "补回后仍是 3 条")
+
+    // normalizeBullets 也要遵守上限
+    let many = (0..<10).map { "x\($0)" }
+    check(UILogic.normalizeBullets(many).count == 3, "normalizeBullets 应截断到 3")
 }
 
 @MainActor

@@ -2,7 +2,6 @@ import SwiftUI
 import AppKit
 import Combine
 
-
 // MARK: - 视图局部状态
 //
 // 本机只有 Command Line Tools，没有 Xcode 的 SwiftUIMacros，
@@ -16,10 +15,6 @@ final class ComposerState: ObservableObject {
     @Published var draftPoints: [String] = []
     /// 要点输入行的当前文字
     @Published var pointDraft: String = ""
-    /// 有没有展开要点输入区。
-    /// 默认收起，避免打开面板就顶着一堆空行；
-    /// 用户按 Tab 或点「+ 要点」才展开。
-    @Published var pointsExpanded: Bool = false
     @Published var priority: Priority = .normal
     /// 新事项的工期（天）
     @Published var span: Int = 1
@@ -115,7 +110,6 @@ final class ComposerState: ObservableObject {
     func resetPoints() {
         draftPoints = []
         pointDraft = ""
-        pointsExpanded = false
     }
 
     func flash(_ message: String) {
@@ -163,6 +157,18 @@ struct ContentView: View {
     @StateObject private var ui = ComposerState()
     @FocusState private var inputFocused: Bool
     @FocusState private var pointFocused: Bool
+    @StateObject private var writeBtn = PressState()
+
+    @MainActor
+    final class PressState: ObservableObject {
+        @Published var pressed = false
+    }
+
+    /// 能不能写入：标题非空即可。
+    /// 要点是可选的，不影响能否提交。
+    private var canWrite: Bool {
+        !ui.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     /// 展开形变状态。用 EnvironmentObject 而不是普通属性：
     /// rootView 是值类型，每次改属性都会重建 NSHostingView，
@@ -406,65 +412,49 @@ struct ContentView: View {
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
                 }
 
-                // 要点入口：常驻的小按钮。
-                // 放在回车键左边，因为它比回车更"次要"——
-                // 回车是主操作，要点是可选的分支。
-                if !ui.pointsExpanded {
-                    Button {
-                        withAnimation(Theme.springSnappy) {
-                            ui.pointsExpanded = true
-                        }
-                        // 展开后把焦点交给要点输入行，省掉一次点击
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                            pointFocused = true
-                        }
-                    } label: {
-                        HStack(spacing: 2) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 8, weight: .bold))
-                            Text("要点")
-                                .font(.system(size: 9.5, weight: .medium))
-                        }
-                        .foregroundStyle(Theme.inkTertiary)
-                        .padding(.horizontal, 5)
-                        .frame(height: 19)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(Theme.surfaceHover)
-                        )
-                        .contentShape(Rectangle())
+                // 写入按钮：标题框右侧的主操作。
+                //
+                // 之前只有一个 ↵ 键帽提示"可以按回车"，但那需要用户
+                // 把焦点放回标题框再按。按钮是直接可点的，
+                // 而且它把"写入备忘录"这件事变成了一个明确动作，
+                // 而不是一个要记住的快捷键。
+                //
+                // 图标用箭头向下入托盘：动作方向是"把内容收进去"，
+                // 比一个勾更贴切（勾暗示"确认/完成"，这里是"收录"）。
+                Button(action: commit) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down.to.line")
+                            .font(.system(size: 9.5, weight: .bold))
+                        Text("写入")
+                            .font(.system(size: 11, weight: .semibold))
                     }
-                    .buttonStyle(.plain)
-                    .help("添加子要点")
-                    .transition(.scale(scale: 0.9).combined(with: .opacity))
-                }
-
-                // 回车提示：做成键帽的样子，有内容时才点亮。
-                // 它同时承担两个作用——提示"这样就能存"，
-                // 以及在视觉上把右侧封住，输入行不至于向右散掉。
-                Text("↵")
-                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(
-                        inputFocused && !ui.draft.isEmpty ? Theme.inkSecondary : Theme.inkQuaternary
-                    )
-                    .frame(width: 19, height: 19)
+                    .foregroundStyle(canWrite ? Color.white : Theme.inkQuaternary)
+                    .padding(.horizontal, 10)
+                    .frame(height: 24)
                     .background(
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .fill(inputFocused && !ui.draft.isEmpty
-                                  ? Theme.selectionFill
-                                  : Theme.surfaceHover)
+                        Capsule().fill(canWrite ? Theme.accent : Theme.surfaceHover)
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .strokeBorder(
-                                inputFocused && !ui.draft.isEmpty
-                                    ? Theme.selectionStroke
-                                    : Color.clear,
-                                lineWidth: 0.8
-                            )
+                        Capsule().strokeBorder(
+                            canWrite ? Color.clear : Theme.stroke,
+                            lineWidth: Theme.hairline
+                        )
                     )
-                    .scaleEffect(inputFocused && !ui.draft.isEmpty ? 1.0 : 0.92)
-                    .animation(Theme.springSnappy, value: ui.draft.isEmpty)
+                }
+                .buttonStyle(.plain)
+                .disabled(!canWrite)
+                .help("写入备忘录（回车）")
+                .scaleEffect(writeBtn.pressed ? 0.95 : 1)
+                .animation(Theme.springBouncy, value: writeBtn.pressed)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { _ in
+                            if !writeBtn.pressed { withAnimation(Theme.easeFast) { writeBtn.pressed = true } }
+                        }
+                        .onEnded { _ in
+                            withAnimation(Theme.springBouncy) { writeBtn.pressed = false }
+                        }
+                )
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 11)
@@ -489,84 +479,74 @@ struct ContentView: View {
             .animation(Theme.springSnappy, value: inputFocused)
             .animation(Theme.easeFast, value: ui.draft.isEmpty)
 
-            // 子要点区：已加的要点 + 一条常驻输入行。
+            // 子要点区：常驻，不折叠。
             //
-            // 只有展开时才占高度。默认收起的原因：打开面板首先看到的
-            // 应该是一个干净的输入框，而不是一个待填的表单。
-            // 按 Tab 或点「+ 要点」展开，展开后一直留着——
-            // 连续加几条要点时不该每次都重新点开。
-            if ui.pointsExpanded {
-                VStack(alignment: .leading, spacing: 5) {
-                    // 已加的要点：每条右侧一个删除键（悬停才显形）
-                    ForEach(Array(ui.draftPoints.enumerated()), id: \.offset) { index, point in
-                        DraftPointRow(
-                            text: point,
-                            onChange: { newText in
-                                ui.draftPoints = UILogic.replacingBullet(
-                                    ui.draftPoints, at: index, with: newText
-                                )
-                            },
-                            onDelete: {
-                                withAnimation(Theme.springSnappy) {
-                                    ui.draftPoints = UILogic.removingBullet(ui.draftPoints, at: index)
-                                }
+            // 早先是"点开才出现"，那样每次记要点都要多一步；
+            // 上限收到 3 条之后，这块的高度最多 4 行，
+            // 常驻也不会把输入区顶高，没有折叠的必要了。
+            VStack(alignment: .leading, spacing: 5) {
+                // 已加的要点：每条右侧一个删除键（悬停才显形）
+                ForEach(Array(ui.draftPoints.enumerated()), id: \.offset) { index, point in
+                    DraftPointRow(
+                        text: point,
+                        onChange: { newText in
+                            ui.draftPoints = UILogic.replacingBullet(
+                                ui.draftPoints, at: index, with: newText
+                            )
+                        },
+                        onDelete: {
+                            withAnimation(Theme.springSnappy) {
+                                ui.draftPoints = UILogic.removingBullet(ui.draftPoints, at: index)
                             }
-                        )
-                        .transition(
-                            .asymmetric(
-                                insertion: .opacity.combined(with: .move(edge: .top)),
-                                removal: .opacity.combined(with: .scale(scale: 0.94))
-                            )
-                        )
-                    }
-
-                    // 要点输入行
-                    HStack(spacing: 7) {
-                        // 圆点：和列表里要点用同一个符号，形成呼应
-                        Circle()
-                            .fill(Theme.inkQuaternary)
-                            .frame(width: 3.5, height: 3.5)
-                            .padding(.leading, 2)
-
-                        TextField(
-                            UILogic.canAddBullet(ui.draftPoints)
-                                ? "加一条要点，回车添加"
-                                : "最多 \(UILogic.maxBulletPoints) 条",
-                            text: $ui.pointDraft
-                        )
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12))
-                        .focused($pointFocused)
-                        .disabled(!UILogic.canAddBullet(ui.draftPoints))
-                        .onSubmit(addPoint)
-
-                        if !ui.draftPoints.isEmpty {
-                            Text(UILogic.bulletSummary(ui.draftPoints))
-                                .font(.system(size: 9.5, weight: .medium))
-                                .foregroundStyle(Theme.inkQuaternary)
-                                .monospacedDigit()
                         }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(Theme.surface)
                     )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .strokeBorder(
-                                pointFocused ? Theme.inkQuaternary : Theme.stroke,
-                                lineWidth: pointFocused ? 1 : Theme.hairline
-                            )
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .top)),
+                            removal: .opacity.combined(with: .scale(scale: 0.94))
+                        )
                     )
                 }
-                .padding(.horizontal, 1)
-                .transition(
-                    .asymmetric(
-                        insertion: .opacity.combined(with: .move(edge: .top)),
-                        removal: .opacity
+
+                // 要点输入行
+                HStack(spacing: 7) {
+                    // 圆点：和列表里要点用同一个符号，形成呼应
+                    Circle()
+                        .fill(Theme.inkQuaternary)
+                        .frame(width: 3.5, height: 3.5)
+                        .padding(.leading, 2)
+
+                    TextField(
+                        UILogic.canAddBullet(ui.draftPoints)
+                            ? "加一条要点，回车添加"
+                            : "最多 \(UILogic.maxBulletPoints) 条",
+                        text: $ui.pointDraft
                     )
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .focused($pointFocused)
+                    .disabled(!UILogic.canAddBullet(ui.draftPoints))
+                    .onSubmit(addPoint)
+
+                    if !ui.draftPoints.isEmpty {
+                        Text(UILogic.bulletSummary(ui.draftPoints))
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(Theme.inkQuaternary)
+                            .monospacedDigit()
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Theme.surface)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(
+                            pointFocused ? Theme.inkQuaternary : Theme.stroke,
+                            lineWidth: pointFocused ? 1 : Theme.hairline
+                        )
                 )
             }
 
@@ -669,15 +649,18 @@ struct ContentView: View {
                 cardArea
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 1, pinnedViews: [.sectionHeaders]) {
-                        ForEach(store.pendingGroupSlices(visibleItems), id: \.key) { group in
-                            Section {
-                                ForEach(group.items) { item in
-                                    memoRow(for: item)
-                                }
-                            } header: {
-                                GroupHeader(key: group.key, items: group.items)
-                            }
+                    // 不再按日期分组。
+                    //
+                    // 分组曾经是有道理的：那时排序也是日期优先，分组头和
+                    // 排序规则一致，读起来是"今天的事 / 明天的事"。
+                    // 现在排序改成紧急程度优先，再按日期分组就会出现
+                    // 「紧急」那一组里混着今天和下周的事，分组反而打断阅读。
+                    //
+                    // 日期信息没有丢：它现在显示在每行的元信息里
+                    //（逾期会标红），是"这条事项的属性"而不是"组织方式"。
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(visibleItems) { item in
+                            memoRow(for: item)
                         }
                     }
                     .padding(.horizontal, 8)
@@ -1144,68 +1127,6 @@ struct FilterSegment: View {
             withAnimation(Theme.easeFast) { hover.hovering = inside }
         }
         .animation(Theme.springSnappy, value: isSelected)
-    }
-}
-// MARK: - 分组头
-
-struct GroupHeader: View {
-    let key: String
-    let items: [Memo]
-
-    private var pendingCount: Int { items.filter { !$0.done }.count }
-    private var label: DueLabel { DueLabel(dateKey: key) }
-
-    private var isAlerting: Bool { label.isOverdue && pendingCount > 0 }
-
-    var body: some View {
-        HStack(spacing: 7) {
-            // 逾期分组用一个小圆点做醒目提示，而非整行变色
-            if isAlerting {
-                Circle()
-                    .fill(Priority.urgent.tint)
-                    .frame(width: 4, height: 4)
-            }
-
-            Text(Self.display(key))
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(isAlerting ? Priority.urgent.tint : Theme.inkSecondary)
-                .tracking(0.2)
-
-            Text(label.text)
-                .font(.system(size: 9.5, weight: .regular))
-                .foregroundStyle(isAlerting ? Priority.urgent.tint.opacity(0.85) : Theme.inkQuaternary)
-
-            Spacer()
-
-            if pendingCount > 0 {
-                Text("\(pendingCount)")
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundStyle(Theme.inkTertiary)
-                    .monospacedDigit()
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(Theme.surface))
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, 14)
-        .padding(.bottom, 5)
-        // pinned header 会被拉伸到滚动区整宽，任何背景都会吃掉左右留白，
-        // 所以只画一条极淡的底线来分隔分组。
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.primary.opacity(0.06))
-                .frame(height: Theme.hairline)
-                .padding(.horizontal, 10)
-        }
-    }
-
-    static func display(_ key: String) -> String {
-        guard let date = DateKey.date(from: key) else { return key }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日 EEEE"
-        return formatter.string(from: date)
     }
 }
 
