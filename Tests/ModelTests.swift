@@ -40,6 +40,8 @@ testSpan()
     testFocusLostCommitRules()
     testClickRegionHitTest()
     testAnimationTiers()
+    testDateLineWithWeekday()
+    testSpanEditableForSingleDay()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -1509,6 +1511,107 @@ func testAnimationTiers() {
         check(gap >= 0.03,
               "相邻档位至少差 0.03s，否则区分不出来（实测 \(String(format: "%.3f", gap))）")
     }
+}
+
+@MainActor
+
+
+/// 日期行：相对说法 + 绝对日期 + 星期。
+///
+/// 「今天」和「11月5日 周三」解决的是两个不同问题：
+/// 前者一眼知道紧不紧急，后者知道具体是哪天。
+func testDateLineWithWeekday() {
+    // 固定一个已知的日子来断言，避免依赖运行当天
+    let cal = Calendar.current
+    let now = DateKey.date(from: "2026-11-05")!   // 周四
+    _ = cal
+
+    let key = "2026-11-05"
+    let text = UILogic.shortDateWithWeekday(key, now: now)
+    check(text == "11月5日 周四", "应渲染成「11月5日 周四」（实际：\(text)）")
+
+    // 所有星期都要能正确映射
+    // 2026-11-01 是周日
+    for (offset, expected) in [(0, "周日"), (1, "周一"), (2, "周二"), (3, "周三"),
+                               (4, "周四"), (5, "周五"), (6, "周六")] {
+        let d = DateKey.add(days: offset, to: "2026-11-01")
+        let t = UILogic.shortDateWithWeekday(d, now: now)
+        check(t.contains(expected), "\(d) 应含 \(expected)（实际：\(t)）")
+    }
+
+    // 跨年才显示年份
+    let otherYear = UILogic.shortDateWithWeekday("2027-03-01", now: now)
+    check(otherYear.contains("2027年"), "跨年应显示年份（实际：\(otherYear)）")
+    let sameYear = UILogic.shortDateWithWeekday("2026-03-01", now: now)
+    check(!sameYear.contains("2026年"), "同年不显示年份（实际：\(sameYear)）")
+
+    // 无效输入原样返回，不崩
+    check(UILogic.shortDateWithWeekday("不是日期", now: now) == "不是日期",
+          "无效日期应原样返回")
+
+    // dateLine：相对 + 绝对
+    let line = UILogic.dateLine(relative: "今天", dateKey: "2026-11-05", now: now)
+    check(line == "今天 · 11月5日 周四", "应有相对+绝对（实际：\(line)）")
+
+    // 相对为空时只给绝对
+    check(UILogic.dateLine(relative: "", dateKey: "2026-11-05", now: now) == "11月5日 周四",
+          "无相对说法时只显示绝对日期")
+
+    // 逾期也要带上具体日期
+    let overdue = UILogic.dateLine(relative: "逾期 2 天", dateKey: "2026-11-03", now: now)
+    check(overdue.contains("11月3日"), "逾期也应显示具体日期（实际：\(overdue)）")
+    check(overdue.contains("周"), "逾期也应显示星期")
+}
+
+/// 工期必须对所有事项可改，包括只有 1 天的。
+///
+/// 早先界面只在 isMultiDay 时显示工期角标，
+/// 等于把单日事项（包括今天到期的）的工期做成只读——
+/// 想放宽期限时根本没有入口。
+@MainActor
+func testSpanEditableForSingleDay() {
+    let tmp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("span-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    let store = MemoStore(fileURL: tmp)
+    let today = DateKey.today
+    guard let item = store.add(title: "今天到期", priority: .normal, dueDate: today) else {
+        check(false, "预置应成功")
+        return
+    }
+
+    // 默认工期 1 天
+    let created = store.items.first { $0.id == item.id }!
+    check(created.spanDays == 1, "默认工期应为 1 天")
+    check(!created.isMultiDay, "工期 1 天不算多天")
+    check(created.endDate == today, "工期 1 天时截止日就是起始日")
+
+    // 关键：单日事项也能改
+    store.setSpan(item.id, to: 3)
+    let extended = store.items.first { $0.id == item.id }!
+    check(extended.spanDays == 3, "单日事项应能改为 3 天")
+
+    // 语义：起始日不变，截止日向后顺延
+    check(extended.dueDate == today, "改工期不应移动起始日")
+    check(extended.endDate == DateKey.add(days: 2, to: today),
+          "截止日应顺延到第 3 天（实际：\(extended.endDate)）")
+
+    // 改回去
+    store.setSpan(item.id, to: 1)
+    let back = store.items.first { $0.id == item.id }!
+    check(back.spanDays == 1, "应能改回 1 天")
+    check(back.endDate == today, "改回 1 天后截止日应回到起始日")
+
+    // 下界：不能减到 0 或负数
+    store.setSpan(item.id, to: 0)
+    check(store.items.first { $0.id == item.id }?.spanDays == 1, "工期不应小于 1")
+    store.setSpan(item.id, to: -5)
+    check(store.items.first { $0.id == item.id }?.spanDays == 1, "负工期应被夹到 1")
+
+    // 上界
+    store.setSpan(item.id, to: 9999)
+    check(store.items.first { $0.id == item.id }?.spanDays == 365, "工期上限应为 365")
 }
 
 @MainActor

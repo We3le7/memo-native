@@ -772,6 +772,9 @@ struct ContentView: View {
                 ui.scheduleFocusLostCheck(for: item.id) { commitEdit(item) }
             },
             onFocusInPoints: { ui.cancelPendingFocusLost() },
+            onSetSpan: { days in
+                withAnimation(Theme.tap) { store.setSpan(item.id, to: days) }
+            },
             onSetPriority: { level in
                 withAnimation(Theme.tap) {
                     store.setPriority(item.id, to: level)
@@ -1367,6 +1370,66 @@ struct EditingRegionMarker: NSViewRepresentable {
 /// 已有事项的要点编辑区：列出全部要点，可改可删，底部一行添加。
 ///
 /// 列表和卡片共用同一个组件——两套实现迟早会走偏。
+/// 要点行里的圆形小按钮（加号 / 叉号）。
+///
+/// 抽出来是为了两者**必然**长一样。
+/// 之前加号是 18pt 带底色的圆、叉号是 7.5pt 的裸图标，
+/// 并排看着像两个不同时代的控件。
+///
+/// 尺寸取舍：可见 16pt、可点 22pt。
+/// 这一行本身不到 20pt 高，按钮再大就会把行撑开；
+/// 再小则点不中——它是纯鼠标目标，没有键盘捷径。
+struct PointIconButton: View {
+    let symbol: String
+    let help: String
+    /// 主操作（加号）高亮，删除（叉号）保持安静
+    var prominent: Bool = false
+    /// 可点
+    var enabled: Bool = true
+    let action: () -> Void
+
+    @StateObject private var hover = HoverFlag()
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundStyle(tint)
+                .frame(width: 16, height: 16)
+                .background(Circle().fill(fill))
+                .overlay(
+                    Circle().strokeBorder(border, lineWidth: Theme.hairline)
+                )
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .help(help)
+        .onHover { inside in
+            withAnimation(Theme.hover) { hover.on = inside }
+        }
+        .animation(Theme.tap, value: enabled)
+    }
+
+    private var tint: Color {
+        guard enabled else { return Theme.inkQuaternary }
+        // 叉号是删除，不该比加号更抢眼
+        return prominent ? Theme.ink : (hover.on ? Theme.inkSecondary : Theme.inkTertiary)
+    }
+
+    private var fill: Color {
+        guard enabled else { return .clear }
+        if prominent { return Theme.selectionFill }
+        return hover.on ? Theme.surfaceHover : .clear
+    }
+
+    private var border: Color {
+        guard enabled else { return Theme.stroke }
+        return prominent ? Theme.selectionStroke : Theme.stroke
+    }
+}
+
 struct PointsEditor: View {
     @Binding var points: [String]
     @Binding var draft: String
@@ -1409,19 +1472,11 @@ struct PointsEditor: View {
                     .foregroundStyle(Theme.inkSecondary)
                     .onTapGesture { onFocusGained() }
 
-                    Button {
+                    PointIconButton(symbol: "xmark", help: "删除这条要点") {
                         withAnimation(Theme.tap) {
                             points = UILogic.removingBullet(points, at: index)
                         }
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 7.5, weight: .bold))
-                            .foregroundStyle(Theme.inkQuaternary)
-                            .frame(width: 14, height: 14)
-                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
-                    .help("删除这条要点")
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -1454,11 +1509,13 @@ struct PointsEditor: View {
                 }
 
                 // 加号按钮：只在输入框有内容时才亮起来。
-                // 空输入时保持暗淡但依然占位，避免输入框宽度跳动。
-                //
-                // 可见尺寸 18pt，可点区域放到 24×24——这一行本身矮，
-                // 按钮是全靠鼠标点的唯一入口，太窄会点不中。
-                Button {
+                // 与叉号用同一个组件，保证两个按钮必然一致。
+                PointIconButton(
+                    symbol: "plus",
+                    help: canAdd ? "添加这条要点" : "已达 \(UILogic.maxBulletPoints) 条上限",
+                    prominent: true,
+                    enabled: canCommit
+                ) {
                     onAdd()
                     // 加完之后把焦点还给输入框：
                     // 点按钮会让输入框失焦，不还回去的话
@@ -1466,27 +1523,7 @@ struct PointsEditor: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
                         focused = true
                     }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(canCommit ? Theme.ink : Theme.inkQuaternary)
-                        .frame(width: 18, height: 18)
-                        .background(
-                            Circle().fill(canCommit ? Theme.selectionFill : Color.clear)
-                        )
-                        .overlay(
-                            Circle().strokeBorder(
-                                canCommit ? Theme.selectionStroke : Theme.stroke,
-                                lineWidth: Theme.hairline
-                            )
-                        )
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .disabled(!canCommit)
-                .help(canAdd ? "添加这条要点" : "已达 \(UILogic.maxBulletPoints) 条上限")
-                .animation(Theme.tap, value: canCommit)
             }
             .padding(.vertical, 2)
         }
@@ -1732,6 +1769,7 @@ struct MemoCard: View {
     let onFocusLost: () -> Void
     /// 焦点进入要点区时调用（取消待执行的失焦保存）
     let onFocusInPoints: () -> Void
+    let onSetSpan: (Int) -> Void
     let onSetPriority: (Priority) -> Void
 
     @StateObject private var hover = Hover()
@@ -1877,18 +1915,35 @@ struct MemoCard: View {
                         .font(.system(size: 8.5, weight: .medium))
                         .foregroundStyle(dueTint)
 
-                    Text(item.dueLabel.text)
+                    Text(UILogic.dateLine(relative: item.dueLabel.text, dateKey: item.endDate))
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundStyle(dueTint)
 
-                    if item.isMultiDay {
-                        Text("·")
-                            .font(.system(size: 9))
-                            .foregroundStyle(Theme.inkQuaternary)
+                    // 工期：始终显示，单日也可改。
+                    // 悬停时展开 −/+，和列表行同一套交互。
+                    Text("·")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Theme.inkQuaternary)
+
+                    HStack(spacing: 3) {
                         Text("\(item.spanDays) 天")
                             .font(.system(size: 9.5, weight: .medium))
                             .foregroundStyle(Theme.inkTertiary)
+                            .monospacedDigit()
+
+                        if hover.hovering && !isEditing && !item.done {
+                            HStack(spacing: 2) {
+                                cardSpanButton("minus", help: "缩短一天", enabled: item.spanDays > 1) {
+                                    onSetSpan(item.spanDays - 1)
+                                }
+                                cardSpanButton("plus", help: "延长一天", enabled: true) {
+                                    onSetSpan(item.spanDays + 1)
+                                }
+                            }
+                            .transition(.opacity.combined(with: .move(edge: .leading)))
+                        }
                     }
+                    .animation(Theme.hover, value: hover.hovering)
 
                     Spacer(minLength: 4)
 
@@ -1956,6 +2011,28 @@ struct MemoCard: View {
     }
 
     /// 日期颜色：逾期用警示红，今天用强调色，其余中性。
+    /// 卡片的工期加减键。与列表行同一套观感（12pt 圆形小键），
+    /// 只是这里空间宽裕，能直接给到 14pt。
+    private func cardSpanButton(
+        _ symbol: String,
+        help: String,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 7, weight: .bold))
+                .frame(width: 13, height: 13)
+                .background(Circle().fill(Theme.surfaceHover))
+                .foregroundStyle(Theme.inkSecondary)
+                .contentShape(Circle().inset(by: -3))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.3)
+        .help(help)
+    }
+
     private var dueTint: Color {
         if item.done { return Theme.inkTertiary }
         if item.dueLabel.isOverdue { return Priority.urgent.tint }
@@ -2106,7 +2183,7 @@ struct MemoRow: View {
                 rowAction("trash", help: "删除", action: onDelete)
             }
             .opacity(hover.hovering ? 1 : 0)
-            .animation(.easeOut(duration: 0.14), value: hover.hovering)
+            .animation(Theme.hover, value: hover.hovering)
 
             // 优先级色条：保留但更细更淡，作为扫视时的纵向线索
             Capsule()
@@ -2224,10 +2301,10 @@ struct MemoRow: View {
                         .transition(.opacity.combined(with: .move(edge: .leading)))
                     }
                 }
-                .animation(.easeOut(duration: 0.14), value: hover.hovering)
+                .animation(Theme.hover, value: hover.hovering)
             }
 
-            Text(item.dueLabel.text)
+            Text(UILogic.dateLine(relative: item.dueLabel.text, dateKey: item.endDate))
                 .font(.system(size: 9.5, weight: item.dueLabel.isOverdue && !item.done ? .semibold : .regular))
                 .foregroundStyle(
                     item.dueLabel.isOverdue && !item.done
@@ -2235,53 +2312,18 @@ struct MemoRow: View {
                         : Theme.inkTertiary
                 )
 
-            // 工期角标：多天的事项才显示，避免单日事项被噪声污染。
+            // 工期角标：**始终显示**，单日也要显示。
+            //
+            // 早先只在多天时出现，理由是"避免单日事项被噪声污染"。
+            // 但那等于把单日事项的工期变成只读的——
+            // 今天到期的事想改成一个更宽松的期限，界面里根本没有入口。
+            // 噪声可以用样式压下去，功能不能靠隐藏来实现。
+            //
             // 悬停时摊开「−/+」，直接加减，不走系统菜单。
-            if item.isMultiDay {
-                HStack(spacing: 3) {
-                    HStack(spacing: 2) {
-                        Image(systemName: "calendar.badge.clock")
-                            .font(.system(size: 7.5, weight: .medium))
-                        Text("\(item.spanDays) 天")
-                            .font(.system(size: 9, weight: .medium))
-                            .monospacedDigit()
-                    }
-                    .foregroundStyle(Theme.inkSecondary)
-                    .padding(.horizontal, 4.5)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(Theme.surface))
-
-                    if hover.hovering && !item.done {
-                        HStack(spacing: 2) {
-                            Button { onSetSpan(item.spanDays - 1) } label: {
-                                Image(systemName: "minus")
-                                    .font(.system(size: 7, weight: .bold))
-                                    .frame(width: 12, height: 12)
-                                    .background(Circle().fill(Theme.surfaceHover))
-                                    .foregroundStyle(Theme.inkSecondary)
-                                    .contentShape(Circle().inset(by: -2))
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(item.spanDays <= 1)
-                            .opacity(item.spanDays <= 1 ? 0.35 : 1)
-                            .help("缩短一天")
-
-                            Button { onSetSpan(item.spanDays + 1) } label: {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 7, weight: .bold))
-                                    .frame(width: 12, height: 12)
-                                    .background(Circle().fill(Theme.surfaceHover))
-                                    .foregroundStyle(Theme.inkSecondary)
-                                    .contentShape(Circle().inset(by: -2))
-                            }
-                            .buttonStyle(.plain)
-                            .help("延长一天")
-                        }
-                        .transition(.opacity.combined(with: .move(edge: .leading)))
-                    }
-                }
-                .animation(.easeOut(duration: 0.14), value: hover.hovering)
-            }
+            spanBadge
+                // 单日事项的工期保持低调：悬停时才完全亮起来。
+                // 用透明度压噪声，而不是用隐藏来省事。
+                .opacity(item.isMultiDay || hover.hovering ? 1 : 0.5)
 
             if let created = UILogic.createdTimeText(item.createdAt) {
                 Text("·")
@@ -2295,6 +2337,57 @@ struct MemoRow: View {
 
             Spacer(minLength: 0)
         }
+    }
+
+    /// 工期角标：读数 + 悬停时摊开的「−/+」。
+    ///
+    /// **单日事项也显示**。今天到期的事想改成宽松一点的期限，
+    /// 早先根本没有入口——工期 1 天时角标整个不出现，
+    /// 等于把工期做成了只读。
+    private var spanBadge: some View {
+        HStack(spacing: 3) {
+            HStack(spacing: 2) {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 7.5, weight: .medium))
+                Text("\(item.spanDays) 天")
+                    .font(.system(size: 9, weight: .medium))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(item.spanDays > 1 ? Theme.inkSecondary : Theme.inkTertiary)
+            .padding(.horizontal, 4.5)
+            .padding(.vertical, 1)
+            .background(Capsule().fill(Theme.surface))
+
+            if hover.hovering && !item.done {
+                HStack(spacing: 2) {
+                    Button { onSetSpan(item.spanDays - 1) } label: {
+                        Image(systemName: "minus")
+                            .font(.system(size: 7, weight: .bold))
+                            .frame(width: 12, height: 12)
+                            .background(Circle().fill(Theme.surfaceHover))
+                            .foregroundStyle(Theme.inkSecondary)
+                            .contentShape(Circle().inset(by: -2))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(item.spanDays <= 1)
+                    .opacity(item.spanDays <= 1 ? 0.35 : 1)
+                    .help("缩短一天")
+
+                    Button { onSetSpan(item.spanDays + 1) } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 7, weight: .bold))
+                            .frame(width: 12, height: 12)
+                            .background(Circle().fill(Theme.surfaceHover))
+                            .foregroundStyle(Theme.inkSecondary)
+                            .contentShape(Circle().inset(by: -2))
+                    }
+                    .buttonStyle(.plain)
+                    .help("延长一天")
+                }
+                .transition(.opacity.combined(with: .move(edge: .leading)))
+            }
+        }
+        .animation(Theme.hover, value: hover.hovering)
     }
 
     private func rowAction(_ system: String, help: String, action: @escaping () -> Void) -> some View {
@@ -2538,6 +2631,6 @@ struct SpanPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.88 : 1.0)
-            .animation(.spring(response: 0.22, dampingFraction: 0.6), value: configuration.isPressed)
+            .animation(Theme.confirm, value: configuration.isPressed)
     }
 }

@@ -574,3 +574,47 @@ extension UILogic {
         animationTiers[name] ?? 0.2
     }
 }
+
+// MARK: - 日期与星期
+
+extension UILogic {
+    static let weekdayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+
+    /// 把 yyyy-MM-dd 渲染成「11-05 周三」。
+    ///
+    /// 只给月和日、不给年：备忘录基本都是近期的事，
+    /// 带上年份反而让这一行变长，挤掉真正想看的星期。
+    /// 跨年那天值得特殊对待——那时年份才有意义。
+    static func shortDateWithWeekday(_ key: String, now: Date = Date()) -> String {
+        guard let date = DateKey.date(from: key) else { return key }
+
+        let cal = Calendar.current
+        let parts = cal.dateComponents([.year, .month, .day, .weekday], from: date)
+        guard let month = parts.month, let day = parts.day, let weekday = parts.weekday else {
+            return key
+        }
+        let monthDay = String(format: "%d月%d日", month, day)
+        // weekday 是 1...7（周日=1）
+        let week = weekdayNames[max(0, min(6, weekday - 1))]
+
+        // 跨年才显示年份
+        let thisYear = cal.component(.year, from: now)
+        if let year = parts.year, year != thisYear {
+            return "\(year)年\(monthDay) \(week)"
+        }
+        return "\(monthDay) \(week)"
+    }
+
+    /// 完整的日期行文案：相对说法 + 绝对日期。
+    ///
+    /// 「今天」和「11月5日 周三」解决的是两个不同问题：
+    /// 前者一眼知道紧不紧急，后者知道具体是哪天——
+    /// 只有相对说法时，看到「3 天后」还要心算一遍。
+    ///
+    /// 两者都留，用 · 隔开。
+    static func dateLine(relative: String, dateKey: String, now: Date = Date()) -> String {
+        let absolute = shortDateWithWeekday(dateKey, now: now)
+        if relative.isEmpty { return absolute }
+        return "\(relative) · \(absolute)"
+    }
+}
