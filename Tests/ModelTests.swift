@@ -46,6 +46,8 @@ testSpan()
     testBulletStableIdentity()
     testPointsInputVisibility()
     testInputIconContrast()
+    testSortCacheInvalidation()
+    testSortCacheInvalidation()
     testSpaceChangeSyncOrb()
     testOrbRevealRespectsToggle()
     testOrbAbsorbRespectsToggle()
@@ -2034,4 +2036,81 @@ func testSpan() {
     }
     try? FileManager.default.removeItem(at: tmp)
 
+}
+
+/// 排序缓存必须总是返回正确结果。
+///
+/// 缓存最容易引入"看起来对、偶尔错"的问题：
+/// 漏掉一个影响排序的字段，就会在某些操作后返回旧顺序，
+/// 而且只在特定数据下才复现。
+/// 这条测试逐个字段验证缓存会失效。
+@MainActor
+func testSortCacheInvalidation() {
+    let tmp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("cache-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: tmp) }
+    let store = MemoStore(fileURL: tmp)
+    let today = DateKey.today
+
+    guard let a = store.add(title: "甲", priority: .low, dueDate: today),
+          let b = store.add(title: "乙", priority: .urgent, dueDate: today) else {
+        check(false, "预置失败"); return
+    }
+
+    var order = store.sortedItems.map(\.id)
+    check(order.first == b.id, "紧急的应排在前")
+    check(store.sortedItems.map(\.id) == order, "连续两次读取结果必须相同")
+
+    // 1. 改优先级
+    store.setPriority(b.id, to: .low)
+    store.setPriority(a.id, to: .urgent)
+    order = store.sortedItems.map(\.id)
+    check(order.first == a.id, "改优先级后顺序应更新")
+
+    // 2. 改完成态
+    store.toggleDone(a.id)
+    order = store.sortedItems.map(\.id)
+    check(order.last == a.id, "完成项应下沉")
+
+    // 3. 改到期日
+    store.toggleDone(a.id)
+    store.update(b.id) { $0.dueDate = DateKey.add(days: -5, to: today) }
+    order = store.sortedItems.map(\.id)
+    check(order.first == b.id, "逾期项应排最前")
+
+    // 4. 改工期（影响截止日 → 影响逾期）
+    guard let c = store.add(title: "丙", priority: .normal,
+                            dueDate: DateKey.add(days: -1, to: today)) else {
+        check(false, "预置丙"); return
+    }
+    check(store.sortedItems.first?.id == c.id, "昨天到期应逾期排前")
+    store.setSpan(c.id, to: 10)
+    check(store.sortedItems.first?.id != c.id, "工期拉长后不再逾期，不该排最前")
+
+    // 5. 新增
+    let beforeCount = store.sortedItems.count
+    _ = store.add(title: "丁", priority: .urgent, dueDate: today)
+    check(store.sortedItems.count == beforeCount + 1, "新增后缓存应失效")
+
+    // 6. 删除
+    store.delete(b.id)
+    check(!store.sortedItems.contains { $0.id == b.id }, "已删除项不该出现")
+    check(store.sortedItems.count == store.items.count, "条数应与 items 一致")
+
+    // 7. 改标题：顺序不变，但内容必须更新
+    if let target = store.sortedItems.first {
+        store.rename(target.id, to: "改了名字")
+        check(store.sortedItems.contains { $0.title == "改了名字" },
+              "改标题后内容应更新（缓存不能返回旧对象）")
+    }
+
+    // 8. 任何操作后条数都必须一致
+    check(store.sortedItems.count == store.items.count, "条数始终应与 items 一致")
+
+    // 9. 空库
+    let emptyTmp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("empty-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: emptyTmp) }
+    let emptyStore = MemoStore(fileURL: emptyTmp)
+    check(emptyStore.sortedItems.isEmpty, "空库应返回空数组")
 }

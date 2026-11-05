@@ -1278,8 +1278,6 @@ struct IconGlyph: View {
     }
 }
 
-// MARK: - 安静的文字选项（日期）
-
 // MARK: - 优先级选择器
 //
 // 旧版是 4 个 17×17 的圆点：直径 5.5pt 的点、17pt 的命中区，
@@ -1441,8 +1439,6 @@ struct FilterSegment: View {
     }
 }
 
-// MARK: - 单行
-
 // MARK: - 编辑区标记
 
 extension View {
@@ -1467,8 +1463,6 @@ extension View {
         }
     }
 }
-
-// MARK: - 编辑区标记
 
 /// 记录"编辑区"在窗口里的位置。
 ///
@@ -1559,7 +1553,7 @@ struct EditingRegionMarker: NSViewRepresentable {
     }
 }
 
-// MARK: - 要点编辑器// MARK: - 要点编辑器
+// MARK: - 要点编辑器
 
 /// 已有事项的要点编辑区：列出全部要点，可改可删，底部一行添加。
 ///

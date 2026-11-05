@@ -193,13 +193,28 @@ enum MemoSort {
     /// 已经过期三天的事，再"不紧急"也该先处理——
     /// 这也是唯一一处日期能压过优先级的地方。
     static func sorted(_ items: [Memo]) -> [Memo] {
-        items.sorted { lhs, rhs in
+        // 逾期状态必须**预计算**，不能写在比较器里。
+        //
+        // 比较器会被调用 O(n log n) 次。`dueLabel.isOverdue` 每次都要
+        // 解析日期字符串、跑 Calendar 加减——那是 DateFormatter，
+        // 单次微秒级，乘上几千次就是几十毫秒。
+        // 实测 200 条事项单次排序 211ms，而界面一次刷新要算 5 次。
+        //
+        // 这里先把状态摊平成字典，比较器里只查表。
+        let today = DateKey.today
+        var overdue: [String: Bool] = [:]
+        overdue.reserveCapacity(items.count)
+        for item in items {
+            overdue[item.id] = endKey(for: item) < today
+        }
+
+        return items.sorted { lhs, rhs in
             // 1. 未完成的在前
             if lhs.done != rhs.done { return !lhs.done }
 
             // 2. 逾期的排在所有未逾期的之前（仅未完成项参与比较）
-            let lo = lhs.dueLabel.isOverdue
-            let ro = rhs.dueLabel.isOverdue
+            let lo = overdue[lhs.id] ?? false
+            let ro = overdue[rhs.id] ?? false
             if lo != ro { return lo }
 
             // 3. 紧急程度
@@ -213,6 +228,13 @@ enum MemoSort {
             // 5. 最后按创建时间，保证顺序稳定
             return lhs.createdAt < rhs.createdAt
         }
+    }
+
+    /// 事项的截止日键（工期 1 天时等于起始日）。
+    /// sorted 里预计算用，避免走 DueLabel 的完整构造。
+    private static func endKey(for item: Memo) -> String {
+        let span = item.spanDays
+        return span <= 1 ? item.dueDate : DateKey.add(days: span - 1, to: item.dueDate)
     }
 
     /// 保留分组能力，但界面已不再用它组织列表。
@@ -429,7 +451,53 @@ final class MemoStore: ObservableObject {
 
     // MARK: 派生数据
 
-    var sortedItems: [Memo] { MemoSort.sorted(items) }
+    /// 排序结果缓存。
+    ///
+    /// 一次界面刷新里 `visibleItems` 会被访问 5~6 次
+    ///（判空、ForEach、两处 animation 的 value、卡片枚举…），
+    /// 每次都重排一遍纯属浪费。
+    ///
+    /// **缓存的是"顺序"（id 数组），不是 Memo 副本。**
+    ///
+    /// 这一点很关键：早先直接缓存 [Memo]。指纹只算影响排序的字段
+    ///（id/done/到期/工期/优先级），改标题不触发重排——于是一次
+    /// 重命名之后，列表里还是旧标题，直到某个影响排序的变化才刷新。
+    /// 这是个只在"改了但不影响顺序"时才出现的 bug。
+    ///
+    /// 现在按 id 顺序重排回最新的 Memo：顺序命中缓存，
+    /// 内容永远取当前值。
+    private var sortCache: (fingerprint: Int, order: [String])?
+
+    var sortedItems: [Memo] {
+        let fp = sortFingerprint
+        let order: [String]
+        // 指纹相同还不够：条数必须也对得上。
+        // 哈希理论上可能碰撞，而碰撞的后果是列表里少了几条——
+        // 那是用户丢数据，代价太高，不值得为省一次比较冒险。
+        if let cache = sortCache, cache.fingerprint == fp, cache.order.count == items.count {
+            order = cache.order
+        } else {
+            order = MemoSort.sorted(items).map(\.id)
+            sortCache = (fp, order)
+        }
+        // 按缓存顺序取当前对象。查表 O(n)，比重新排序便宜得多。
+        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        return order.compactMap { byID[$0] }
+    }
+
+    /// 排序只依赖这几个字段，其余变化不影响顺序
+    private var sortFingerprint: Int {
+        var hasher = Hasher()
+        hasher.combine(items.count)
+        for item in items {
+            hasher.combine(item.id)
+            hasher.combine(item.done)
+            hasher.combine(item.dueDate)
+            hasher.combine(item.spanDays)
+            hasher.combine(item.priority.rank)
+        }
+        return hasher.finalize()
+    }
     var pending: [Memo] { sortedItems.filter { !$0.done } }
     var groupedPending: [(key: String, items: [Memo])] { MemoSort.grouped(sortedItems) }
 
