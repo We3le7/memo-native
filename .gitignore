@@ -3,6 +3,9 @@ build/
 *.app/
 modulecache/
 
+# 磁盘映像（用 scripts/make_dmg.sh 生成，不入库）
+*.dmg
+
 # macOS
 .DS_Store
 ._*

@@ -122,6 +122,31 @@ open build/MemoNative.app   # 运行
 `install.sh` 会优先装到 `/Applications`；那里不可写时
 自动退回到 `~/Applications`，不需要管理员权限。
 
+### 打包成 DMG
+
+```bash
+./scripts/make_dmg.sh                 # 产出 build/MemoNative-1.0.dmg
+./scripts/make_dmg.sh --skip-build    # 直接用现有 .app，不重新编译
+./scripts/make_dmg.sh --no-background # 不画背景图
+./scripts/make_dmg.sh --out ~/Desktop/MemoNative.dmg
+```
+
+成品是标准的拖拽式安装盘：打开后左边是 App、右边是「应用程序」替身，
+图标位置和窗口尺寸都排好了，拖过去即完成安装。
+
+窗口背景由 `scripts/make_dmg_background.py` 按同一组坐标画出来——
+背景图和图标坐标必须对齐，所以两边共用一套常量，改一个就得改另一个。
+没装 Pillow 时脚本会自动降级成无背景的窗口，不会失败。
+
+**DMG 里的 App 是 ad-hoc 签名**，从网上下载后首次打开会被 Gatekeeper 拦下
+（提示「无法验证开发者」）。用户右键点「打开」即可放行，或执行：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/MemoNative.app
+```
+
+这不是 bug，是没有 Apple 开发者证书的直接结果。装上证书并公证后这段就能删掉。
+
 **调试用环境变量**（要从二进制直跑才看得到输出，`open` 会吞掉 stdout）：
 
 ```bash
