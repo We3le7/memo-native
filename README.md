@@ -16,7 +16,25 @@
 | **测试** | 674 项断言，`./scripts/test.sh` |
 | **分发** | 无需签名，本地 ad-hoc |
 
-## 一键安装
+## 下载安装
+
+不想自己编译，直接下装好的：
+
+**[⬇️ 下载 MemoNative 1.0（DMG，1.1 MB）](https://github.com/We3le7/memo-native/releases/latest)**
+
+打开后把左边的 App 拖进右边的「应用程序」文件夹即可。
+
+> **首次打开会被 Gatekeeper 拦下**，提示「无法验证开发者」。
+> 因为没有 Apple 开发者证书，App 只是 ad-hoc 签名。
+> 在 App 上**右键 →「打开」**即可放行（只需一次），或执行：
+>
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/MemoNative.app
+> ```
+
+## 从源码安装
+
+想自己编译（或改代码）：
 
 ```bash
 git clone --depth 1 https://github.com/We3le7/memo-native.git ~/memo-native && cd ~/memo-native && ./scripts/build.sh && ./scripts/install.sh && open -a MemoNative
@@ -133,6 +151,8 @@ open build/MemoNative.app   # 运行
 
 成品是标准的拖拽式安装盘：打开后左边是 App、右边是「应用程序」替身，
 图标位置和窗口尺寸都排好了，拖过去即完成安装。
+
+正式发布的安装包见 [Releases](https://github.com/We3le7/memo-native/releases)。
 
 窗口背景由 `scripts/make_dmg_background.py` 按同一组坐标画出来——
 背景图和图标坐标必须对齐，所以两边共用一套常量，改一个就得改另一个。
